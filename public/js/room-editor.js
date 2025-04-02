@@ -7,7 +7,7 @@ class RoomEditor {
         this.dpi = window.devicePixelRatio || 1;
         this.isPanning = false;
         this.panStart = null;
-        this.roomOffset = { x: 0, y: 0 };
+        this.roomOffsets = [{ x: 0, y: 0 }];  // Initialize first room's offset
         this.hoverPoint = null;
         this.hoverSegmentIndex = null;
         this.measurementInput = null;
@@ -19,9 +19,17 @@ class RoomEditor {
         this.ctx = this.canvas.getContext('2d', { alpha: false });
         this.measurements = document.getElementById(measurementsId);
 
-        // Initialize with 1x1 square
+        // Initialize with 1x1 square first
         this.initializeSquare();
         
+        // Then set up rooms array with the initialized square
+        this.rooms = [this.points];
+        this.activeRoomIndex = 0;
+
+        // Add button click handler
+        const addRoomButton = document.querySelector('.add-room-button');
+        addRoomButton.addEventListener('click', () => this.addNewRoom());
+
         // Set up high DPI canvas
         this.setupCanvas();
         window.addEventListener('resize', () => this.setupCanvas());
@@ -68,13 +76,24 @@ class RoomEditor {
     }
 
     initializeSquare() {
-        // Create a 1x1 meter square
+        // Create a 1x1 meter square centered in the canvas
+        const canvasCenter = {
+            x: (this.canvas.width / this.dpi / this.scale / 2),
+            y: (this.canvas.height / this.dpi / this.scale / 2)
+        };
+
         this.points = [
-            { x: 1, y: 1 }, // Top-right
-            { x: 2, y: 1 }, // Top-left
-            { x: 2, y: 2 }, // Bottom-left
-            { x: 1, y: 2 }  // Bottom-right
+            { x: -0.5, y: -0.5 }, // Top-left
+            { x: 0.5, y: -0.5 },  // Top-right
+            { x: 0.5, y: 0.5 },   // Bottom-right
+            { x: -0.5, y: 0.5 }   // Bottom-left
         ];
+
+        // Set initial offset to center the square
+        this.roomOffsets[0] = {
+            x: canvasCenter.x / this.scale,
+            y: canvasCenter.y / this.scale
+        };
     }
 
     setupCanvas() {
@@ -108,8 +127,8 @@ class RoomEditor {
     findClosestPointOnSegment(pos, p1, p2) {
         // Remove offset from position for calculation
         const posWithoutOffset = {
-            x: pos.x - this.roomOffset.x,
-            y: pos.y - this.roomOffset.y
+            x: pos.x - this.roomOffsets[this.activeRoomIndex].x,
+            y: pos.y - this.roomOffsets[this.activeRoomIndex].y
         };
         
         const dx = p2.x - p1.x;
@@ -136,8 +155,11 @@ class RoomEditor {
         if (this.isPanning && !this.isDragging) {
             const dx = (e.clientX - this.panStart.x) / this.scale;
             const dy = (e.clientY - this.panStart.y) / this.scale;
-            this.roomOffset.x += dx;
-            this.roomOffset.y += dy;
+            
+            // Only update the active room's offset
+            this.roomOffsets[this.activeRoomIndex].x += dx;
+            this.roomOffsets[this.activeRoomIndex].y += dy;
+            
             this.panStart = { x: e.clientX, y: e.clientY };
             this.render();
             return;
@@ -146,8 +168,8 @@ class RoomEditor {
         if (this.isDragging && this.selectedPointIndex !== null) {
             // Update point position
             this.points[this.selectedPointIndex] = {
-                x: pos.x - this.roomOffset.x,
-                y: pos.y - this.roomOffset.y
+                x: pos.x - this.roomOffsets[this.activeRoomIndex].x,
+                y: pos.y - this.roomOffsets[this.activeRoomIndex].y
             };
 
             // Enforce all angle constraints after point movement
@@ -171,8 +193,8 @@ class RoomEditor {
 
                 const closest = this.findClosestPointOnSegment(pos, p1, p2);
                 const closestWithOffset = {
-                    x: closest.x + this.roomOffset.x,
-                    y: closest.y + this.roomOffset.y
+                    x: closest.x + this.roomOffsets[this.activeRoomIndex].x,
+                    y: closest.y + this.roomOffsets[this.activeRoomIndex].y
                 };
                 
                 const dist = Math.hypot(
@@ -252,6 +274,17 @@ class RoomEditor {
         // Prevent default to avoid text selection
         e.preventDefault();
         
+        // Check if clicking on a different room
+        this.rooms.forEach((roomPoints, index) => {
+            if (this.isPointInRoom(pos, roomPoints, index)) {
+                this.activeRoomIndex = index;
+                this.points = this.rooms[this.activeRoomIndex];
+                this.updateMeasurements();
+                this.render();
+                return;
+            }
+        });
+
         // Check if we're clicking a measurement first
         if (this.checkMeasurementClick(pos)) {
             return;
@@ -260,8 +293,8 @@ class RoomEditor {
         // Check if clicking near existing point
         const pointIndex = this.points.findIndex(p => 
             Math.hypot(
-                ((p.x + this.roomOffset.x) * this.scale) - (pos.x * this.scale),
-                ((p.y + this.roomOffset.y) * this.scale) - (pos.y * this.scale)
+                ((p.x + this.roomOffsets[this.activeRoomIndex].x) * this.scale) - (pos.x * this.scale),
+                ((p.y + this.roomOffsets[this.activeRoomIndex].y) * this.scale) - (pos.y * this.scale)
             ) < 10
         );
 
@@ -274,8 +307,8 @@ class RoomEditor {
         // Check for line hover point
         if (this.hoverPoint && this.hoverSegmentIndex !== null) {
             this.points.splice(this.hoverSegmentIndex + 1, 0, {
-                x: this.hoverPoint.x - this.roomOffset.x,
-                y: this.hoverPoint.y - this.roomOffset.y
+                x: this.hoverPoint.x - this.roomOffsets[this.activeRoomIndex].x,
+                y: this.hoverPoint.y - this.roomOffsets[this.activeRoomIndex].y
             });
             this.selectedPointIndex = this.hoverSegmentIndex + 1;
             this.isDragging = true;
@@ -300,12 +333,12 @@ class RoomEditor {
             if (j === 0 && this.points.length < 3) continue;
 
             const p1 = {
-                x: (this.points[i].x + this.roomOffset.x) * this.scale,
-                y: (this.points[i].y + this.roomOffset.y) * this.scale
+                x: (this.points[i].x + this.roomOffsets[this.activeRoomIndex].x) * this.scale,
+                y: (this.points[i].y + this.roomOffsets[this.activeRoomIndex].y) * this.scale
             };
             const p2 = {
-                x: (this.points[j].x + this.roomOffset.x) * this.scale,
-                y: (this.points[j].y + this.roomOffset.y) * this.scale
+                x: (this.points[j].x + this.roomOffsets[this.activeRoomIndex].x) * this.scale,
+                y: (this.points[j].y + this.roomOffsets[this.activeRoomIndex].y) * this.scale
             };
 
             // Calculate line angle and midpoint
@@ -493,8 +526,8 @@ class RoomEditor {
         const length = this.calculateSegmentLength(p1, p2);
 
         // Calculate position for input
-        const midX = ((p1.x + p2.x) / 2 + this.roomOffset.x) * this.scale;
-        const midY = ((p1.y + p2.y) / 2 + this.roomOffset.y) * this.scale;
+        const midX = ((p1.x + p2.x) / 2 + this.roomOffsets[this.activeRoomIndex].x) * this.scale;
+        const midY = ((p1.y + p2.y) / 2 + this.roomOffsets[this.activeRoomIndex].y) * this.scale;
         const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
 
         // Calculate text offset
@@ -586,32 +619,40 @@ class RoomEditor {
         // Clear the entire canvas
         this.ctx.clearRect(0, 0, this.canvas.width / this.dpi, this.canvas.height / this.dpi);
         
-        // Draw grid (fixed)
+        // Draw grid
         this.drawGrid();
 
-        // Draw room shape
-        if (this.points.length > 0) {
-            this.ctx.beginPath();
-            const startX = Math.floor((this.points[0].x + this.roomOffset.x) * this.scale) + 0.5;
-            const startY = Math.floor((this.points[0].y + this.roomOffset.y) * this.scale) + 0.5;
-            this.ctx.moveTo(startX, startY);
+        // Draw all rooms
+        this.rooms.forEach((roomPoints, index) => {
+            const isActiveRoom = index === this.activeRoomIndex;
+            const roomOffset = this.roomOffsets[index];
+            
+            if (roomPoints.length > 0) {
+                this.ctx.beginPath();
+                const startX = Math.floor((roomPoints[0].x + roomOffset.x) * this.scale) + 0.5;
+                const startY = Math.floor((roomPoints[0].y + roomOffset.y) * this.scale) + 0.5;
+                this.ctx.moveTo(startX, startY);
 
-            for (let i = 1; i < this.points.length; i++) {
-                const x = Math.floor((this.points[i].x + this.roomOffset.x) * this.scale) + 0.5;
-                const y = Math.floor((this.points[i].y + this.roomOffset.y) * this.scale) + 0.5;
-                this.ctx.lineTo(x, y);
+                for (let i = 1; i < roomPoints.length; i++) {
+                    const x = Math.floor((roomPoints[i].x + roomOffset.x) * this.scale) + 0.5;
+                    const y = Math.floor((roomPoints[i].y + roomOffset.y) * this.scale) + 0.5;
+                    this.ctx.lineTo(x, y);
+                }
+
+                if (roomPoints.length > 2) {
+                    this.ctx.closePath();
+                }
+
+                this.ctx.strokeStyle = isActiveRoom ? '#2563eb' : '#64748b';
+                this.ctx.lineWidth = isActiveRoom ? 2 : 1;
+                this.ctx.stroke();
+                this.ctx.fillStyle = isActiveRoom ? '#2563eb20' : '#64748b20';
+                this.ctx.fill();
             }
+        });
 
-            if (this.points.length > 2) {
-                this.ctx.closePath();
-            }
-
-            this.ctx.strokeStyle = '#2563eb';
-            this.ctx.lineWidth = 2;
-            this.ctx.stroke();
-            this.ctx.fillStyle = '#2563eb20';
-            this.ctx.fill();
-        }
+        // Draw points, measurements, etc. for active room only
+        const activeOffset = this.roomOffsets[this.activeRoomIndex];
 
         // Draw measurements
         this.ctx.font = '14px Arial';
@@ -623,12 +664,12 @@ class RoomEditor {
             if (j === 0 && this.points.length < 3) continue;
 
             const p1 = {
-                x: this.points[i].x + this.roomOffset.x,
-                y: this.points[i].y + this.roomOffset.y
+                x: this.points[i].x + activeOffset.x,
+                y: this.points[i].y + activeOffset.y
             };
             const p2 = {
-                x: this.points[j].x + this.roomOffset.x,
-                y: this.points[j].y + this.roomOffset.y
+                x: this.points[j].x + activeOffset.x,
+                y: this.points[j].y + activeOffset.y
             };
             
             // Calculate midpoint with offset
@@ -682,8 +723,8 @@ class RoomEditor {
 
         // Draw points
         this.points.forEach((point, index) => {
-            const x = Math.floor((point.x + this.roomOffset.x) * this.scale) + 0.5;
-            const y = Math.floor((point.y + this.roomOffset.y) * this.scale) + 0.5;
+            const x = Math.floor((point.x + activeOffset.x) * this.scale) + 0.5;
+            const y = Math.floor((point.y + activeOffset.y) * this.scale) + 0.5;
             
             this.ctx.beginPath();
             this.ctx.arc(x, y, 4, 0, Math.PI * 2);
@@ -736,10 +777,10 @@ class RoomEditor {
             this.ctx.strokeStyle = '#dc2626';
             this.ctx.lineWidth = 1;
             this.ctx.beginPath();
-            this.ctx.moveTo((minX + this.roomOffset.x) * this.scale, (minY + this.roomOffset.y) * this.scale);
-            this.ctx.lineTo((maxX + this.roomOffset.x) * this.scale, (minY + this.roomOffset.y) * this.scale);
-            this.ctx.lineTo((maxX + this.roomOffset.x) * this.scale, (maxY + this.roomOffset.y) * this.scale);
-            this.ctx.lineTo((minX + this.roomOffset.x) * this.scale, (maxY + this.roomOffset.y) * this.scale);
+            this.ctx.moveTo((minX + activeOffset.x) * this.scale, (minY + activeOffset.y) * this.scale);
+            this.ctx.lineTo((maxX + activeOffset.x) * this.scale, (minY + activeOffset.y) * this.scale);
+            this.ctx.lineTo((maxX + activeOffset.x) * this.scale, (maxY + activeOffset.y) * this.scale);
+            this.ctx.lineTo((minX + activeOffset.x) * this.scale, (maxY + activeOffset.y) * this.scale);
             this.ctx.closePath();
             this.ctx.stroke();
             this.ctx.setLineDash([]); // Reset dash pattern
@@ -748,8 +789,8 @@ class RoomEditor {
         // Draw angle indicators for points with set angles
         this.pointAngles.forEach((angle, index) => {
             const point = this.points[index];
-            const x = (point.x + this.roomOffset.x) * this.scale;
-            const y = (point.y + this.roomOffset.y) * this.scale;
+            const x = (point.x + activeOffset.x) * this.scale;
+            const y = (point.y + activeOffset.y) * this.scale;
 
             // Draw angle indicator
             this.ctx.beginPath();
@@ -771,8 +812,8 @@ class RoomEditor {
         if (this.roomName && this.points.length >= 3) {
             const center = this.calculateRoomCenter();
             if (center) {
-                const x = (center.x + this.roomOffset.x) * this.scale;
-                const y = (center.y + this.roomOffset.y) * this.scale;
+                const x = (center.x + activeOffset.x) * this.scale;
+                const y = (center.y + activeOffset.y) * this.scale;
 
                 // Use same font as measurements
                 this.ctx.font = '14px Arial';
@@ -817,8 +858,8 @@ class RoomEditor {
         // Check for points and lines
         const nearPoint = this.points.some(point => {
             const dist = Math.hypot(
-                ((point.x + this.roomOffset.x) * this.scale) - (pos.x * this.scale),
-                ((point.y + this.roomOffset.y) * this.scale) - (pos.y * this.scale)
+                ((point.x + this.roomOffsets[this.activeRoomIndex].x) * this.scale) - (pos.x * this.scale),
+                ((point.y + this.roomOffsets[this.activeRoomIndex].y) * this.scale) - (pos.y * this.scale)
             );
             return dist < 15;
         });
@@ -853,10 +894,10 @@ class RoomEditor {
         // Point in polygon check
         let inside = false;
         for (let i = 0, j = this.points.length - 1; i < this.points.length; j = i++) {
-            const xi = (this.points[i].x + this.roomOffset.x) * this.scale;
-            const yi = (this.points[i].y + this.roomOffset.y) * this.scale;
-            const xj = (this.points[j].x + this.roomOffset.x) * this.scale;
-            const yj = (this.points[j].y + this.roomOffset.y) * this.scale;
+            const xi = (this.points[i].x + this.roomOffsets[this.activeRoomIndex].x) * this.scale;
+            const yi = (this.points[i].y + this.roomOffsets[this.activeRoomIndex].y) * this.scale;
+            const xj = (this.points[j].x + this.roomOffsets[this.activeRoomIndex].x) * this.scale;
+            const yj = (this.points[j].y + this.roomOffsets[this.activeRoomIndex].y) * this.scale;
 
             const intersect = ((yi > scaledPos.y) !== (yj > scaledPos.y))
                 && (scaledPos.x < (xj - xi) * (scaledPos.y - yi) / (yj - yi) + xi);
@@ -870,8 +911,8 @@ class RoomEditor {
         const nearFeature = this.points.some((point, i) => {
             // Check distance to point
             const distToPoint = Math.hypot(
-                ((point.x + this.roomOffset.x) * this.scale) - scaledPos.x,
-                ((point.y + this.roomOffset.y) * this.scale) - scaledPos.y
+                ((point.x + this.roomOffsets[this.activeRoomIndex].x) * this.scale) - scaledPos.x,
+                ((point.y + this.roomOffsets[this.activeRoomIndex].y) * this.scale) - scaledPos.y
             );
             
             if (distToPoint < 20) return true;
@@ -880,8 +921,8 @@ class RoomEditor {
             const next = this.points[(i + 1) % this.points.length];
             const closest = this.findClosestPointOnSegment(pos, point, next);
             const distToLine = Math.hypot(
-                ((closest.x + this.roomOffset.x) * this.scale) - scaledPos.x,
-                ((closest.y + this.roomOffset.y) * this.scale) - scaledPos.y
+                ((closest.x + this.roomOffsets[this.activeRoomIndex].x) * this.scale) - scaledPos.x,
+                ((closest.y + this.roomOffsets[this.activeRoomIndex].y) * this.scale) - scaledPos.y
             );
 
             return distToLine < 20;
@@ -896,8 +937,8 @@ class RoomEditor {
         // First check if clicking near a point
         const pointIndex = this.points.findIndex(p => 
             Math.hypot(
-                ((p.x + this.roomOffset.x) * this.scale) - (pos.x * this.scale),
-                ((p.y + this.roomOffset.y) * this.scale) - (pos.y * this.scale)
+                ((p.x + this.roomOffsets[this.activeRoomIndex].x) * this.scale) - (pos.x * this.scale),
+                ((p.y + this.roomOffsets[this.activeRoomIndex].y) * this.scale) - (pos.y * this.scale)
             ) < 10
         );
 
@@ -1256,6 +1297,54 @@ class RoomEditor {
         // Update measurements and render
         this.updateMeasurements();
         this.render();
+    }
+
+    addNewRoom() {
+        // Calculate offset for new room based on canvas center
+        const canvasCenter = {
+            x: (this.canvas.width / this.dpi / this.scale / 2),
+            y: (this.canvas.height / this.dpi / this.scale / 2)
+        };
+
+        // Create a 1x1 square room offset from center
+        const newRoom = [
+            { x: -0.5, y: -0.5 },
+            { x: 0.5, y: -0.5 },
+            { x: 0.5, y: 0.5 },
+            { x: -0.5, y: 0.5 }
+        ];
+
+        // Add the new room to the rooms array
+        this.rooms.push(newRoom);
+        // Add new offset for this room
+        this.roomOffsets.push({ 
+            x: canvasCenter.x / this.scale,
+            y: canvasCenter.y / this.scale
+        });
+        
+        // Switch to the new room
+        this.activeRoomIndex = this.rooms.length - 1;
+        this.points = this.rooms[this.activeRoomIndex];
+        
+        // Update the display
+        this.updateMeasurements();
+        this.render();
+    }
+
+    isPointInRoom(pos, roomPoints, roomIndex) {
+        const roomOffset = this.roomOffsets[roomIndex];
+        let inside = false;
+        for (let i = 0, j = roomPoints.length - 1; i < roomPoints.length; j = i++) {
+            const xi = (roomPoints[i].x + roomOffset.x) * this.scale;
+            const yi = (roomPoints[i].y + roomOffset.y) * this.scale;
+            const xj = (roomPoints[j].x + roomOffset.x) * this.scale;
+            const yj = (roomPoints[j].y + roomOffset.y) * this.scale;
+
+            const intersect = ((yi > pos.y * this.scale) !== (yj > pos.y * this.scale))
+                && (pos.x * this.scale < (xj - xi) * (pos.y * this.scale - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
     }
 }
 
