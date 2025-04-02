@@ -11,9 +11,10 @@ class RoomEditor {
         this.hoverPoint = null;
         this.hoverSegmentIndex = null;
         this.measurementInput = null;
-        this.pointAngles = new Map(); // Store angles for points
+        this.roomAngles = [new Map()];  // Initialize with empty map for first room
         this.contextMenu = null;
-        this.roomName = '';
+        this.roomNames = [''];
+        this.roomFixedLengths = [new Map()]; // Initialize with empty map for first room
 
         this.canvas = document.getElementById(canvasId);
         this.ctx = this.canvas.getContext('2d', { alpha: false });
@@ -155,11 +156,8 @@ class RoomEditor {
         if (this.isPanning && !this.isDragging) {
             const dx = (e.clientX - this.panStart.x) / this.scale;
             const dy = (e.clientY - this.panStart.y) / this.scale;
-            
-            // Only update the active room's offset
             this.roomOffsets[this.activeRoomIndex].x += dx;
             this.roomOffsets[this.activeRoomIndex].y += dy;
-            
             this.panStart = { x: e.clientX, y: e.clientY };
             this.render();
             return;
@@ -167,14 +165,26 @@ class RoomEditor {
 
         if (this.isDragging && this.selectedPointIndex !== null) {
             // Update point position
-            this.points[this.selectedPointIndex] = {
+            const newPos = {
                 x: pos.x - this.roomOffsets[this.activeRoomIndex].x,
                 y: pos.y - this.roomOffsets[this.activeRoomIndex].y
             };
 
-            // Enforce all angle constraints after point movement
-            this.enforceAllAngles(this.selectedPointIndex);
+            // Store original position
+            const originalPos = { ...this.points[this.selectedPointIndex] };
             
+            // Update the point position
+            this.points[this.selectedPointIndex] = newPos;
+
+            // Enforce fixed lengths
+            this.enforceFixedLengths(this.selectedPointIndex);
+
+            // If we couldn't maintain fixed lengths, revert the move
+            if (!this.areFixedLengthsValid()) {
+                this.points[this.selectedPointIndex] = originalPos;
+            }
+
+            this.enforceAllAngles();
             this.updateMeasurements();
             this.render();
             return;
@@ -214,42 +224,48 @@ class RoomEditor {
         this.render();
     }
 
-    enforceAllAngles(movedPointIndex) {
+    enforceAllAngles() {
         let iterations = 0;
-        const maxIterations = 5; // Prevent infinite loops
+        const maxIterations = 10;
         let angleFixed;
 
         do {
             angleFixed = false;
-            this.pointAngles.forEach((targetAngle, pointIndex) => {
-                if (pointIndex === 0 || pointIndex >= this.points.length - 1) return;
+            // Only enforce angles for the active room
+            const activeAngles = this.roomAngles[this.activeRoomIndex];
+            
+            for (let pointIndex = 0; pointIndex < this.points.length; pointIndex++) {
+                const targetAngle = activeAngles.get(pointIndex);
+                if (targetAngle === undefined) continue;
 
-                const prev = this.points[pointIndex - 1];
+                const numPoints = this.points.length;
+                const prev = this.points[(pointIndex - 1 + numPoints) % numPoints];
                 const current = this.points[pointIndex];
-                const next = this.points[pointIndex + 1];
+                const next = this.points[(pointIndex + 1) % numPoints];
 
-                // Calculate current angle
-                const angle1 = Math.atan2(current.y - prev.y, current.x - prev.x);
-                const angle2 = Math.atan2(next.y - current.y, next.x - current.x);
-                let currentAngle = ((angle2 - angle1) * 180 / Math.PI + 360) % 360;
+                const currentAngle = this.calculateCurrentAngle(pointIndex);
 
-                // If angle is significantly different from target, adjust it
                 if (Math.abs(currentAngle - targetAngle) > 0.1) {
                     angleFixed = true;
 
-                    // Determine which point to move based on which was dragged
-                    if (movedPointIndex === pointIndex - 1) {
-                        // Previous point was moved, adjust next point
-                        this.rotatePointAroundCenter(current, next, targetAngle - currentAngle);
-                    } else if (movedPointIndex === pointIndex + 1) {
-                        // Next point was moved, adjust previous point
-                        this.rotatePointAroundCenter(current, prev, currentAngle - targetAngle);
-                    } else {
-                        // Current point or other point was moved, adjust next point
-                        this.rotatePointAroundCenter(current, next, targetAngle - currentAngle);
-                    }
+                    const v1 = {
+                        x: prev.x - current.x,
+                        y: prev.y - current.y
+                    };
+                    const v2 = {
+                        x: next.x - current.x,
+                        y: next.y - current.y
+                    };
+
+                    const angleToRotate = targetAngle - currentAngle;
+                    const rotatedVector = this.rotateVector(v2, angleToRotate);
+                    
+                    this.points[(pointIndex + 1) % numPoints] = {
+                        x: current.x + rotatedVector.x,
+                        y: current.y + rotatedVector.y
+                    };
                 }
-            });
+            }
             iterations++;
         } while (angleFixed && iterations < maxIterations);
     }
@@ -279,6 +295,7 @@ class RoomEditor {
             if (this.isPointInRoom(pos, roomPoints, index)) {
                 this.activeRoomIndex = index;
                 this.points = this.rooms[this.activeRoomIndex];
+                // No need to reset or carry over room name when switching rooms
                 this.updateMeasurements();
                 this.render();
                 return;
@@ -388,7 +405,7 @@ class RoomEditor {
     onMouseUp() {
         if (this.isDragging && this.selectedPointIndex !== null) {
             // Final angle enforcement after drag
-            this.enforceAllAngles(this.selectedPointIndex);
+            this.enforceAllAngles();
         }
         
         this.isPanning = false;
@@ -560,6 +577,9 @@ class RoomEditor {
         const handleChange = () => {
             const newLength = parseFloat(input.value);
             if (!isNaN(newLength) && newLength > 0) {
+                // Store the fixed length for this segment
+                const segmentKey = `${index1}-${index2}`;
+                this.roomFixedLengths[this.activeRoomIndex].set(segmentKey, newLength);
                 this.adjustSegmentLength(index1, index2, newLength);
             }
             input.remove();
@@ -609,7 +629,7 @@ class RoomEditor {
         };
         
         // Enforce angles after length adjustment
-        this.enforceAllAngles(index2);
+        this.enforceAllAngles();
         
         this.updateMeasurements();
         this.render();
@@ -622,12 +642,13 @@ class RoomEditor {
         // Draw grid
         this.drawGrid();
 
-        // Draw all rooms
+        // Draw all rooms with their measurements
         this.rooms.forEach((roomPoints, index) => {
             const isActiveRoom = index === this.activeRoomIndex;
             const roomOffset = this.roomOffsets[index];
             
             if (roomPoints.length > 0) {
+                // Draw room shape
                 this.ctx.beginPath();
                 const startX = Math.floor((roomPoints[0].x + roomOffset.x) * this.scale) + 0.5;
                 const startY = Math.floor((roomPoints[0].y + roomOffset.y) * this.scale) + 0.5;
@@ -648,78 +669,70 @@ class RoomEditor {
                 this.ctx.stroke();
                 this.ctx.fillStyle = isActiveRoom ? '#2563eb20' : '#64748b20';
                 this.ctx.fill();
+
+                // Draw measurements for each room
+                this.ctx.font = '14px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                
+                for (let i = 0; i < roomPoints.length; i++) {
+                    const j = (i + 1) % roomPoints.length;
+                    if (j === 0 && roomPoints.length < 3) continue;
+
+                    const p1 = {
+                        x: roomPoints[i].x + roomOffset.x,
+                        y: roomPoints[i].y + roomOffset.y
+                    };
+                    const p2 = {
+                        x: roomPoints[j].x + roomOffset.x,
+                        y: roomPoints[j].y + roomOffset.y
+                    };
+                    
+                    // Calculate midpoint with offset
+                    const midX = Math.floor((p1.x + p2.x) / 2 * this.scale) + 0.5;
+                    const midY = Math.floor((p1.y + p2.y) / 2 * this.scale) + 0.5;
+                    
+                    // Calculate angle of the line
+                    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+                    let labelAngle = angle;
+                    
+                    // Calculate length using original points
+                    const length = this.calculateSegmentLength(roomPoints[i], roomPoints[j]);
+                    const text = length.toFixed(2) + 'm';
+                    const metrics = this.ctx.measureText(text);
+                    const textHeight = 14;
+                    const padding = 4;
+                    const offset = textHeight + padding;
+
+                    if (angle > Math.PI/2 || angle < -Math.PI/2) {
+                        labelAngle += Math.PI;
+                    }
+
+                    this.ctx.save();
+                    this.ctx.translate(midX, midY);
+                    
+                    const perpAngle = angle - Math.PI/2;
+                    const offsetX = Math.cos(perpAngle) * offset;
+                    const offsetY = Math.sin(perpAngle) * offset;
+                    
+                    this.ctx.translate(offsetX, offsetY);
+                    
+                    if (Math.abs(angle) > Math.PI/2) {
+                        this.ctx.rotate(labelAngle - Math.PI);
+                    } else {
+                        this.ctx.rotate(labelAngle);
+                    }
+
+                    this.ctx.fillStyle = isActiveRoom ? '#2563eb' : '#64748b';
+                    this.ctx.fillText(text, 0, 0);
+                    
+                    this.ctx.restore();
+                }
             }
         });
 
         // Draw points, measurements, etc. for active room only
         const activeOffset = this.roomOffsets[this.activeRoomIndex];
-
-        // Draw measurements
-        this.ctx.font = '14px Arial';
-        this.ctx.textAlign = 'center';
-        this.ctx.textBaseline = 'middle';
-        
-        for (let i = 0; i < this.points.length; i++) {
-            const j = (i + 1) % this.points.length;
-            if (j === 0 && this.points.length < 3) continue;
-
-            const p1 = {
-                x: this.points[i].x + activeOffset.x,
-                y: this.points[i].y + activeOffset.y
-            };
-            const p2 = {
-                x: this.points[j].x + activeOffset.x,
-                y: this.points[j].y + activeOffset.y
-            };
-            
-            // Calculate midpoint with offset
-            const midX = Math.floor((p1.x + p2.x) / 2 * this.scale) + 0.5;
-            const midY = Math.floor((p1.y + p2.y) / 2 * this.scale) + 0.5;
-            
-            // Calculate angle of the line
-            const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-            let labelAngle = angle;
-            
-            // Calculate length using original points (without offset)
-            const length = this.calculateSegmentLength(this.points[i], this.points[j]);
-            const text = length.toFixed(2) + 'm';
-            const metrics = this.ctx.measureText(text);
-            const textHeight = 14;
-            const padding = 4;
-            const offset = textHeight + padding;
-
-            if (angle > Math.PI/2 || angle < -Math.PI/2) {
-                labelAngle += Math.PI;
-            }
-
-            this.ctx.save();
-            this.ctx.translate(midX, midY);
-            
-            const perpAngle = angle - Math.PI/2;
-            const offsetX = Math.cos(perpAngle) * offset;
-            const offsetY = Math.sin(perpAngle) * offset;
-            
-            this.ctx.translate(offsetX, offsetY);
-            
-            if (Math.abs(angle) > Math.PI/2) {
-                this.ctx.rotate(labelAngle - Math.PI);
-            } else {
-                this.ctx.rotate(labelAngle);
-            }
-
-            this.ctx.fillStyle = 'white';
-            this.ctx.fillRect(
-                -metrics.width/2 - padding,
-                -textHeight/2 - padding,
-                metrics.width + padding * 2,
-                textHeight + padding * 2
-            );
-            
-            this.ctx.fillStyle = '#000';
-            this.ctx.fillText(text, 0, 0);
-            
-            this.ctx.restore();
-        }
 
         // Draw points
         this.points.forEach((point, index) => {
@@ -787,7 +800,7 @@ class RoomEditor {
         }
 
         // Draw angle indicators for points with set angles
-        this.pointAngles.forEach((angle, index) => {
+        this.roomAngles[this.activeRoomIndex].forEach((angle, index) => {
             const point = this.points[index];
             const x = (point.x + activeOffset.x) * this.scale;
             const y = (point.y + activeOffset.y) * this.scale;
@@ -808,21 +821,27 @@ class RoomEditor {
             this.ctx.fillText(`${angle}°`, x, y - 20);
         });
 
-        // Draw room name if set
-        if (this.roomName && this.points.length >= 3) {
-            const center = this.calculateRoomCenter();
-            if (center) {
-                const x = (center.x + activeOffset.x) * this.scale;
-                const y = (center.y + activeOffset.y) * this.scale;
+        // Draw room names for all rooms
+        this.rooms.forEach((roomPoints, index) => {
+            const roomName = this.roomNames[index];
+            if (roomName && roomPoints.length >= 3) {
+                let sumX = 0, sumY = 0;
+                roomPoints.forEach(point => {
+                    sumX += point.x;
+                    sumY += point.y;
+                });
+                const center = {
+                    x: (sumX / roomPoints.length + this.roomOffsets[index].x) * this.scale,
+                    y: (sumY / roomPoints.length + this.roomOffsets[index].y) * this.scale
+                };
 
-                // Use same font as measurements
                 this.ctx.font = '14px Arial';
-                this.ctx.fillStyle = '#2563eb';
+                this.ctx.fillStyle = index === this.activeRoomIndex ? '#2563eb' : '#64748b';
                 this.ctx.textAlign = 'center';
                 this.ctx.textBaseline = 'middle';
-                this.ctx.fillText(this.roomName, x, y);
+                this.ctx.fillText(roomName, center.x, center.y);
             }
-        }
+        });
     }
 
     drawGrid() {
@@ -973,6 +992,8 @@ class RoomEditor {
             font-size: 14px;
         `;
 
+        const currentRoomName = this.roomNames[this.activeRoomIndex] || '';
+
         const setNameItem = document.createElement('button');
         setNameItem.className = 'context-menu-item';
         setNameItem.style.cssText = `
@@ -987,7 +1008,7 @@ class RoomEditor {
             border-radius: 4px;
         `;
         setNameItem.innerHTML = `
-            <span style="flex-grow: 1">Set Room Name${this.roomName ? ` (${this.roomName})` : ''}</span>
+            <span style="flex-grow: 1">Set Room Name${currentRoomName ? ` (${currentRoomName})` : ''}</span>
         `;
         setNameItem.addEventListener('mouseenter', () => {
             setNameItem.style.backgroundColor = 'rgb(241 245 249)';
@@ -1013,29 +1034,28 @@ class RoomEditor {
             clearNameItem.style.backgroundColor = 'transparent';
         });
         clearNameItem.addEventListener('click', () => {
-            this.roomName = '';
+            this.roomNames[this.activeRoomIndex] = '';
             this.render();
             menu.remove();
         });
 
         menu.appendChild(setNameItem);
-        if (this.roomName) {
+        if (currentRoomName) {
             menu.appendChild(clearNameItem);
         }
 
-        // Position menu
         menu.style.left = `${e.clientX}px`;
         menu.style.top = `${e.clientY}px`;
 
-        // Add to document
         document.body.appendChild(menu);
         this.contextMenu = menu;
     }
 
     promptRoomName() {
-        const name = prompt('Enter room name:', this.roomName);
+        const currentName = this.roomNames[this.activeRoomIndex] || '';
+        const name = prompt('Enter room name:', currentName);
         if (name !== null) {
-            this.roomName = name.trim();
+            this.roomNames[this.activeRoomIndex] = name.trim();
             this.render();
         }
     }
@@ -1076,7 +1096,7 @@ class RoomEditor {
             font-size: 14px;
         `;
 
-        const currentAngle = this.pointAngles.get(pointIndex);
+        const currentAngle = this.roomAngles[this.activeRoomIndex].get(pointIndex);
         
         // Create menu items
         const setAngleItem = document.createElement('button');
@@ -1119,7 +1139,7 @@ class RoomEditor {
             clearAngleItem.style.backgroundColor = 'transparent';
         });
         clearAngleItem.addEventListener('click', () => {
-            this.pointAngles.delete(pointIndex);
+            this.roomAngles[this.activeRoomIndex].delete(pointIndex);
             this.adjustToAngles();
             this.render();
             menu.remove();
@@ -1152,6 +1172,34 @@ class RoomEditor {
             margin: 4px 0;
         `;
 
+        // Add clear fixed lengths option
+        const clearLengthsItem = document.createElement('button');
+        clearLengthsItem.className = 'context-menu-item';
+        clearLengthsItem.style.cssText = setAngleItem.style.cssText;
+        clearLengthsItem.innerHTML = `
+            <span style="flex-grow: 1">Clear Fixed Lengths</span>
+        `;
+        clearLengthsItem.addEventListener('mouseenter', () => {
+            clearLengthsItem.style.backgroundColor = 'rgb(241 245 249)';
+        });
+        clearLengthsItem.addEventListener('mouseleave', () => {
+            clearLengthsItem.style.backgroundColor = 'transparent';
+        });
+        clearLengthsItem.addEventListener('click', () => {
+            const numPoints = this.points.length;
+            const prevIndex = (pointIndex - 1 + numPoints) % numPoints;
+            const nextIndex = (pointIndex + 1) % numPoints;
+            
+            // Clear fixed lengths for segments connected to this point
+            this.roomFixedLengths[this.activeRoomIndex].delete(`${prevIndex}-${pointIndex}`);
+            this.roomFixedLengths[this.activeRoomIndex].delete(`${pointIndex}-${prevIndex}`);
+            this.roomFixedLengths[this.activeRoomIndex].delete(`${pointIndex}-${nextIndex}`);
+            this.roomFixedLengths[this.activeRoomIndex].delete(`${nextIndex}-${pointIndex}`);
+            
+            this.render();
+            menu.remove();
+        });
+
         menu.appendChild(setAngleItem);
         if (currentAngle !== undefined) {
             menu.appendChild(clearAngleItem);
@@ -1159,9 +1207,13 @@ class RoomEditor {
         
         // Only show delete option if we have more than 3 points
         if (this.points.length > 3) {
-            menu.appendChild(separator);
+            menu.appendChild(separator.cloneNode());
             menu.appendChild(deletePointItem);
         }
+
+        // Add the clear lengths option to the menu
+        menu.appendChild(separator.cloneNode());
+        menu.appendChild(clearLengthsItem);
 
         // Position menu
         menu.style.left = `${e.clientX}px`;
@@ -1173,32 +1225,29 @@ class RoomEditor {
     }
 
     promptAngle(pointIndex) {
-        if (pointIndex === 0 || pointIndex >= this.points.length - 1) {
-            alert('Cannot set angle for first or last point');
-            return;
-        }
-
-        const currentAngle = this.pointAngles.get(pointIndex) || this.calculateCurrentAngle(pointIndex);
+        const currentAngle = this.roomAngles[this.activeRoomIndex].get(pointIndex) || 
+                           this.calculateCurrentAngle(pointIndex);
         const angle = prompt('Enter angle in degrees:', currentAngle.toFixed(1));
         
         if (angle !== null) {
             const angleNum = parseFloat(angle);
-            if (!isNaN(angleNum) && angleNum > 0 && angleNum < 180) {
-                this.pointAngles.set(pointIndex, angleNum);
-                this.adjustToAngles();
+            if (!isNaN(angleNum) && angleNum >= 0 && angleNum <= 360) {
+                this.roomAngles[this.activeRoomIndex].set(pointIndex, angleNum);
+                this.enforceAllAngles();
                 this.render();
             } else {
-                alert('Please enter a valid angle between 0 and 180 degrees');
+                alert('Please enter a valid angle between 0 and 360 degrees');
             }
         }
     }
 
     calculateCurrentAngle(pointIndex) {
-        if (pointIndex === 0 || pointIndex >= this.points.length - 1) return 0;
-
-        const prev = this.points[pointIndex - 1];
+        const numPoints = this.points.length;
+        // Get previous point (wrap around to last point if needed)
+        const prev = this.points[(pointIndex - 1 + numPoints) % numPoints];
         const current = this.points[pointIndex];
-        const next = this.points[pointIndex + 1];
+        // Get next point (wrap around to first point if needed)
+        const next = this.points[(pointIndex + 1) % numPoints];
 
         const v1 = {
             x: prev.x - current.x,
@@ -1223,8 +1272,8 @@ class RoomEditor {
             angle += 360;
         }
         
-        // Convert to interior angle
-        return 180 - angle;
+        // Return the actual angle (removed the 180 - angle conversion)
+        return angle;
     }
 
     rotateVector(v, angleDegrees) {
@@ -1236,12 +1285,11 @@ class RoomEditor {
     }
 
     adjustToAngles() {
-        this.pointAngles.forEach((targetAngle, pointIndex) => {
-            if (pointIndex === 0 || pointIndex >= this.points.length - 1) return;
-
-            const prev = this.points[pointIndex - 1];
+        this.roomAngles[this.activeRoomIndex].forEach((targetAngle, pointIndex) => {
+            const numPoints = this.points.length;
+            const prev = this.points[(pointIndex - 1 + numPoints) % numPoints];
             const current = this.points[pointIndex];
-            const next = this.points[pointIndex + 1];
+            const next = this.points[(pointIndex + 1) % numPoints];
 
             // Calculate vectors
             const v1 = {
@@ -1263,7 +1311,7 @@ class RoomEditor {
             const rotatedVector = this.rotateVector(v2, angleToRotate);
             
             // Update next point position
-            this.points[pointIndex + 1] = {
+            this.points[(pointIndex + 1) % numPoints] = {
                 x: current.x + rotatedVector.x,
                 y: current.y + rotatedVector.y
             };
@@ -1281,18 +1329,18 @@ class RoomEditor {
         this.points.splice(pointIndex, 1);
         
         // Remove any associated angle
-        this.pointAngles.delete(pointIndex);
+        this.roomAngles[this.activeRoomIndex].delete(pointIndex);
         
         // Adjust indices in pointAngles map for points after the deleted point
         const newAngles = new Map();
-        this.pointAngles.forEach((angle, index) => {
+        this.roomAngles[this.activeRoomIndex].forEach((angle, index) => {
             if (index < pointIndex) {
                 newAngles.set(index, angle);
             } else if (index > pointIndex) {
                 newAngles.set(index - 1, angle);
             }
         });
-        this.pointAngles = newAngles;
+        this.roomAngles[this.activeRoomIndex] = newAngles;
 
         // Update measurements and render
         this.updateMeasurements();
@@ -1326,6 +1374,12 @@ class RoomEditor {
         this.activeRoomIndex = this.rooms.length - 1;
         this.points = this.rooms[this.activeRoomIndex];
         
+        // Add new angle map for the new room
+        this.roomAngles.push(new Map());
+        
+        // Add new fixed lengths map for the new room
+        this.roomFixedLengths.push(new Map());
+        
         // Update the display
         this.updateMeasurements();
         this.render();
@@ -1345,6 +1399,76 @@ class RoomEditor {
             if (intersect) inside = !inside;
         }
         return inside;
+    }
+
+    enforceFixedLengths(movedPointIndex) {
+        const fixedLengths = this.roomFixedLengths[this.activeRoomIndex];
+        let iterations = 0;
+        const maxIterations = 10;
+        let lengthFixed;
+
+        do {
+            lengthFixed = false;
+            
+            // Check all segments connected to the moved point
+            const numPoints = this.points.length;
+            const prevIndex = (movedPointIndex - 1 + numPoints) % numPoints;
+            const nextIndex = (movedPointIndex + 1) % numPoints;
+
+            // Check and adjust previous segment
+            const prevKey = `${prevIndex}-${movedPointIndex}`;
+            const prevKeyReverse = `${movedPointIndex}-${prevIndex}`;
+            const prevFixedLength = fixedLengths.get(prevKey) || fixedLengths.get(prevKeyReverse);
+            
+            if (prevFixedLength !== undefined) {
+                const currentLength = this.calculateSegmentLength(
+                    this.points[prevIndex],
+                    this.points[movedPointIndex]
+                );
+                
+                if (Math.abs(currentLength - prevFixedLength) > 0.01) {
+                    lengthFixed = true;
+                    this.adjustSegmentLength(prevIndex, movedPointIndex, prevFixedLength);
+                }
+            }
+
+            // Check and adjust next segment
+            const nextKey = `${movedPointIndex}-${nextIndex}`;
+            const nextKeyReverse = `${nextIndex}-${movedPointIndex}`;
+            const nextFixedLength = fixedLengths.get(nextKey) || fixedLengths.get(nextKeyReverse);
+            
+            if (nextFixedLength !== undefined) {
+                const currentLength = this.calculateSegmentLength(
+                    this.points[movedPointIndex],
+                    this.points[nextIndex]
+                );
+                
+                if (Math.abs(currentLength - nextFixedLength) > 0.01) {
+                    lengthFixed = true;
+                    this.adjustSegmentLength(movedPointIndex, nextIndex, nextFixedLength);
+                }
+            }
+
+            iterations++;
+        } while (lengthFixed && iterations < maxIterations);
+    }
+
+    areFixedLengthsValid() {
+        const fixedLengths = this.roomFixedLengths[this.activeRoomIndex];
+        
+        for (const [key, targetLength] of fixedLengths.entries()) {
+            const [index1, index2] = key.split('-').map(Number);
+            const currentLength = this.calculateSegmentLength(
+                this.points[index1],
+                this.points[index2]
+            );
+            
+            if (Math.abs(currentLength - targetLength) > 0.01) {
+                return false;
+            }
+        }
+        
+        return true;
     }
 }
 
