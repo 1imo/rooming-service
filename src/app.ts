@@ -78,6 +78,44 @@ app.get('/create-room/:companyId/:customerId', async (req, res) => {
     }
 });
 
+// Serve the room view page
+app.get('/rooms/:companyId/:customerId/:roomName', async (req, res) => {
+    try {
+        const { companyId, customerId, roomName } = req.params;
+        
+        // Read the HTML template
+        let html = await fs.readFile(path.join(__dirname, '../public/view-room.html'), 'utf-8');
+        
+        try {
+            // Fetch rooms for this customer
+            const rooms = await roomRepository.getRoomsByCustomer(customerId);
+            const room = rooms.find(r => r.name === roomName);
+            
+            if (!room) {
+                return res.status(404).send('Room not found');
+            }
+            
+            // Inject the room data
+            const roomScript = `
+                <script>
+                    window.room = ${JSON.stringify(room)};
+                    window.isViewOnly = true;
+                </script>
+            `;
+            html = html.replace('</head>', `${roomScript}</head>`);
+            
+            // Send the HTML
+            res.send(html);
+        } catch (dbError) {
+            console.error('Database error:', dbError);
+            res.status(500).send('Error loading room');
+        }
+    } catch (error) {
+        console.error('Error preparing room view page:', error);
+        res.status(500).send('Error loading page');
+    }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.json({ status: 'ok' });

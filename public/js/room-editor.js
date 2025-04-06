@@ -1,5 +1,6 @@
 class RoomEditor {
-    constructor(canvasId, measurementsId) {
+    constructor(canvasId, measurementsId, isViewOnly = false) {
+        this.isViewOnly = isViewOnly;
         this.points = [];
         this.isDragging = false;
         this.selectedPointIndex = null;
@@ -27,10 +28,11 @@ class RoomEditor {
             this.roomOffsets = window.existingRooms.map(() => ({ x: 0, y: 0 }));
             this.roomAngles = window.existingRooms.map(() => new Map());
             this.roomFixedLengths = window.existingRooms.map(() => new Map());
-        } else {
-            // Initialize with 1x1 square first
+            this.activeRoomIndex = 0;
+            this.points = this.rooms[this.activeRoomIndex];
+        } else if (!this.isViewOnly) {
+            // Only initialize with square if not in view-only mode
             this.initializeSquare();
-            // Then set up rooms array with the initialized square
             this.rooms = [this.points];
             this.activeRoomIndex = 0;
         }
@@ -45,49 +47,68 @@ class RoomEditor {
     }
 
     setupEventListeners() {
-        // Add buttons and their handlers
-        const addRoomButton = document.querySelector('.add-room-button');
-        const saveButton = document.querySelector('.save-room-button');
+        // Only set up editing-related buttons if not in view-only mode
+        if (!this.isViewOnly) {
+            const addRoomButton = document.querySelector('.add-room-button');
+            const saveButton = document.querySelector('.save-room-button');
 
-        // Add event listeners
-        addRoomButton.addEventListener('click', () => this.addNewRoom());
-        saveButton.addEventListener('click', () => this.saveFloorplan());
+            if (addRoomButton) {
+                addRoomButton.addEventListener('click', () => this.addNewRoom());
+            }
+            if (saveButton) {
+                saveButton.addEventListener('click', () => this.saveFloorplan());
+            }
+        }
 
         window.addEventListener('resize', () => this.setupCanvas());
 
-        // Initialize event listeners
-        this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
-        this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
-        this.canvas.addEventListener('mouseup', () => this.onMouseUp());
-        this.canvas.addEventListener('dblclick', (e) => this.onDoubleClick(e));
+        // In view-only mode, only set up panning
+        if (this.isViewOnly) {
+            this.canvas.addEventListener('mousedown', (e) => {
+                if (e.button === 0) { // Left click only
+                    this.isPanning = true;
+                    this.panStart = { x: e.clientX, y: e.clientY };
+                }
+            });
+            
+            this.canvas.addEventListener('mousemove', (e) => {
+                if (this.isPanning) {
+                    const dx = (e.clientX - this.panStart.x) / this.scale;
+                    const dy = (e.clientY - this.panStart.y) / this.scale;
+                    this.roomOffsets[this.activeRoomIndex].x += dx;
+                    this.roomOffsets[this.activeRoomIndex].y += dy;
+                    this.panStart = { x: e.clientX, y: e.clientY };
+                    this.render();
+                }
+            });
+            
+            this.canvas.addEventListener('mouseup', () => {
+                this.isPanning = false;
+            });
 
-        // Remove the click event listener that might be causing conflicts
-        this.canvas.removeEventListener('click', this.onCanvasClick);
+            this.canvas.addEventListener('mouseleave', () => {
+                this.isPanning = false;
+            });
 
-        // Update cursor based on context
-        this.canvas.addEventListener('mousemove', (e) => {
-            const pos = this.getMousePos(e);
-            this.updateCursor(pos);
-        });
-
-        // Prevent default context menu
-        this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-        
-        // Add right-click handler
-        this.canvas.addEventListener('mousedown', (e) => {
-            if (e.button === 2) { // Right click
+            // Set cursor for panning
+            this.canvas.style.cursor = 'grab';
+        } else {
+            // Full editing capabilities for non-view-only mode
+            this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
+            this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
+            this.canvas.addEventListener('mouseup', () => this.onMouseUp());
+            this.canvas.addEventListener('dblclick', (e) => this.onDoubleClick(e));
+            this.canvas.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
                 this.handleRightClick(e);
-            }
-        });
-
-        // Close context menu when clicking outside
-        document.addEventListener('click', (e) => {
-            if (this.contextMenu && !this.contextMenu.contains(e.target)) {
-                this.contextMenu.remove();
-                this.contextMenu = null;
-            }
-        });
+            });
+            
+            // Update cursor based on context
+            this.canvas.addEventListener('mousemove', (e) => {
+                const pos = this.getMousePos(e);
+                this.updateCursor(pos);
+            });
+        }
     }
 
     initializeSquare() {
@@ -1701,14 +1722,32 @@ class RoomEditor {
             return;
         }
 
-        // Prepare rooms data
-        const roomsData = this.rooms.map((points, index) => ({
-            name: this.roomNames[index],
-            points: points.map(p => ({
-                x: p.x + this.roomOffsets[index].x,
-                y: p.y + this.roomOffsets[index].y
-            }))
-        }));
+        // Prepare rooms data with measurements
+        const roomsData = this.rooms.map((points, index) => {
+            // Calculate measurements for each room
+            const currentPoints = points;
+            this.points = points; // Temporarily set points to calculate measurements
+            const trueArea = this.calculateArea();
+            const carpetArea = this.calculateBoundingArea();
+            const truePerimeter = this.calculatePerimeter();
+            const carpetPerimeter = truePerimeter + (points.length * 0.2); // Add 20cm per corner
+
+            return {
+                name: this.roomNames[index],
+                points: points.map(p => ({
+                    x: p.x + this.roomOffsets[index].x,
+                    y: p.y + this.roomOffsets[index].y
+                })),
+                measurements: {
+                    trueArea,
+                    carpetArea,
+                    truePerimeter,
+                    carpetPerimeter
+                }
+            };
+        });
+        // Restore the active room's points
+        this.points = this.rooms[this.activeRoomIndex];
 
         try {
             const response = await fetch('/api/rooms/floorplan', {

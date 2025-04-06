@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Room - Floor Planner</title>
+    <title>View Room - Floor Planner</title>
     <style>
         :root {
             --primary: #2563eb;
@@ -40,7 +40,7 @@
         #roomCanvas {
             width: 100%;
             height: 100%;
-            cursor: crosshair;
+            cursor: default;
         }
 
         .measurements {
@@ -77,47 +77,31 @@
             font-weight: 500;
         }
 
-        .button-container {
+        .room-info {
             position: fixed;
             top: 2rem;
             right: 2rem;
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--border);
             z-index: 10;
         }
 
-        .add-room-button,
-        .save-room-button {
-            background: var(--primary);
-            color: white;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.5rem;
-            border: none;
-            font-size: 0.875rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: opacity 0.2s;
-            width: 100%;
+        .room-info h2 {
+            margin-bottom: 0.5rem;
+            color: var(--foreground);
         }
 
-        .add-room-button:hover,
-        .save-room-button:hover {
-            opacity: 0.9;
-        }
-
-        .add-room-button {
-            position: static;
+        .room-info p {
+            color: var(--muted);
+            margin-bottom: 0.25rem;
         }
     </style>
     <script type="module" src="/js/room-editor.js"></script>
 </head>
 <body>
     <div class="container">
-        <div class="button-container">
-            <button class="add-room-button">Add Room</button>
-            <button class="save-room-button">Save Floorplan</button>
-        </div>
         <div class="canvas-container">
             <canvas id="roomCanvas"></canvas>
         </div>
@@ -128,8 +112,20 @@
 
     <script type="module">
         import { RoomEditor } from '/js/room-editor.js';
-        window.isViewOnly = false; 
-        new RoomEditor('roomCanvas', 'measurements');
+        
+        // Set up the room data first
+        if (window.room) {
+            // Create a single-room array from the room data
+            window.existingRooms = [window.room];
+            
+            // Initialize the editor with view-only mode
+            const editor = new RoomEditor('roomCanvas', 'measurements', true);
+            
+            // Set room information
+            document.getElementById('roomName').textContent = window.room.name;
+            document.getElementById('floorType').textContent = `Floor Type: ${window.room.floor_type || 'Default'}`;
+            document.getElementById('notes').textContent = window.room.notes || '';
+        }
     </script>
 </body>
-</html>
+</html> 

@@ -40,7 +40,13 @@ router.post('/', serviceAuth(), async (req, res) => {
             company_id,
             points,
             notes,
-            floor_type
+            floor_type,
+            {
+                trueArea: 0,
+                carpetArea: 0,
+                truePerimeter: 0,
+                carpetPerimeter: 0
+            }
         );
 
         res.status(201).json(room);
@@ -153,13 +159,14 @@ router.post('/floorplan', serviceAuth(), async (req, res) => {
 
         // Validate each room has required fields
         for (const room of rooms) {
-            if (!room.name || !room.points || !Array.isArray(room.points)) {
+            if (!room.name || !room.points || !Array.isArray(room.points) || !room.measurements) {
                 return res.status(400).json({ 
-                    error: 'Each room must have a name and points',
+                    error: 'Each room must have a name, points, and measurements',
                     debug: {
                         roomName: room.name,
                         hasPoints: !!room.points,
-                        pointsIsArray: Array.isArray(room.points)
+                        pointsIsArray: Array.isArray(room.points),
+                        hasMeasurements: !!room.measurements
                     }
                 });
             }
@@ -180,7 +187,7 @@ router.post('/floorplan', serviceAuth(), async (req, res) => {
         // Find rooms to create or update
         for (const [name, room] of newRoomMap) {
             const existingRoom = existingRoomMap.get(name);
-            if (existingRoom) {
+            if (existingRoom && existingRoom.id) {
                 // Room exists - update it
                 roomsToUpdate.push({
                     ...room,
@@ -192,9 +199,9 @@ router.post('/floorplan', serviceAuth(), async (req, res) => {
             }
         }
 
-        // Find rooms to delete (rooms that exist but weren't in the new data)
+        // Find rooms to delete
         for (const [name, room] of existingRoomMap) {
-            if (!newRoomMap.has(name)) {
+            if (!newRoomMap.has(name) && room.id) {
                 roomsToDelete.push(room);
             }
         }
@@ -203,17 +210,18 @@ router.post('/floorplan', serviceAuth(), async (req, res) => {
         const results = await Promise.all([
             // Delete rooms
             ...roomsToDelete.map(room => 
-                roomRepository.deleteRoom(room.id)
+                room.id ? roomRepository.deleteRoom(room.id) : Promise.resolve()
             ),
             
             // Update rooms
             ...roomsToUpdate.map(room => 
-                roomRepository.updateRoom(room.id, {
+                room.id ? roomRepository.updateRoom(room.id, {
                     name: room.name,
                     points: room.points,
                     notes: room.notes || '',
-                    floor_type: room.floor_type || 'default'
-                })
+                    floor_type: room.floor_type || 'default',
+                    measurements: room.measurements
+                }) : Promise.resolve()
             ),
             
             // Create new rooms
@@ -224,7 +232,8 @@ router.post('/floorplan', serviceAuth(), async (req, res) => {
                     companyId,
                     room.points,
                     room.notes || '',
-                    room.floor_type || 'default'
+                    room.floor_type || 'default',
+                    room.measurements
                 )
             )
         ]);
