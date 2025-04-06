@@ -20,23 +20,40 @@ class RoomEditor {
         this.ctx = this.canvas.getContext('2d', { alpha: false });
         this.measurements = document.getElementById(measurementsId);
 
-        // Initialize with 1x1 square first
-        this.initializeSquare();
-        
-        // Then set up rooms array with the initialized square
-        this.rooms = [this.points];
-        this.activeRoomIndex = 0;
+        // Initialize with existing rooms if available
+        if (window.existingRooms && Array.isArray(window.existingRooms)) {
+            this.rooms = window.existingRooms.map(room => room.points);
+            this.roomNames = window.existingRooms.map(room => room.name);
+            this.roomOffsets = window.existingRooms.map(() => ({ x: 0, y: 0 }));
+            this.roomAngles = window.existingRooms.map(() => new Map());
+            this.roomFixedLengths = window.existingRooms.map(() => new Map());
+        } else {
+            // Initialize with 1x1 square first
+            this.initializeSquare();
+            // Then set up rooms array with the initialized square
+            this.rooms = [this.points];
+            this.activeRoomIndex = 0;
+        }
 
-        // Add button click handler
-        const addRoomButton = document.querySelector('.add-room-button');
-        addRoomButton.addEventListener('click', () => this.addNewRoom());
-
-        // Set up high DPI canvas
+        // Set up canvas and event listeners
         this.setupCanvas();
-        window.addEventListener('resize', () => this.setupCanvas());
-
-        // Call updateMeasurements immediately after initialization
+        this.setupEventListeners();
+        
+        // Initial render
         this.updateMeasurements();
+        this.render();
+    }
+
+    setupEventListeners() {
+        // Add buttons and their handlers
+        const addRoomButton = document.querySelector('.add-room-button');
+        const saveButton = document.querySelector('.save-room-button');
+
+        // Add event listeners
+        addRoomButton.addEventListener('click', () => this.addNewRoom());
+        saveButton.addEventListener('click', () => this.saveFloorplan());
+
+        window.addEventListener('resize', () => this.setupCanvas());
 
         // Initialize event listeners
         this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
@@ -71,9 +88,6 @@ class RoomEditor {
                 this.contextMenu = null;
             }
         });
-
-        // Initial render
-        this.render();
     }
 
     initializeSquare() {
@@ -164,27 +178,148 @@ class RoomEditor {
         }
 
         if (this.isDragging && this.selectedPointIndex !== null) {
-            // Update point position
+            // Store original positions
+            const originalPositions = this.points.map(p => ({ ...p }));
+            
+            // Get the proposed new position
             const newPos = {
                 x: pos.x - this.roomOffsets[this.activeRoomIndex].x,
                 y: pos.y - this.roomOffsets[this.activeRoomIndex].y
             };
 
-            // Store original position
-            const originalPos = { ...this.points[this.selectedPointIndex] };
+            // Check if this point is part of any fixed length segments
+            const fixedLengths = this.roomFixedLengths[this.activeRoomIndex];
+            const numPoints = this.points.length;
             
-            // Update the point position
-            this.points[this.selectedPointIndex] = newPos;
-
-            // Enforce fixed lengths
-            this.enforceFixedLengths(this.selectedPointIndex);
-
-            // If we couldn't maintain fixed lengths, revert the move
-            if (!this.areFixedLengthsValid()) {
-                this.points[this.selectedPointIndex] = originalPos;
+            // Get all fixed lengths that involve this point
+            const fixedSegments = [];
+            for (const [key, length] of fixedLengths.entries()) {
+                const [index1, index2] = key.split('-').map(Number);
+                if (index1 === this.selectedPointIndex || index2 === this.selectedPointIndex) {
+                    fixedSegments.push({
+                        otherIndex: index1 === this.selectedPointIndex ? index2 : index1,
+                        length: length
+                    });
+                }
             }
 
-            this.enforceAllAngles();
+                let validPosition = null;
+            if (fixedSegments.length > 0) {
+                if (fixedSegments.length === 1) {
+                    // One fixed length - point must move on a circle
+                    const { otherIndex, length } = fixedSegments[0];
+                    const anchor = this.points[otherIndex];
+                    
+                    // Calculate vector from anchor to desired position
+                    const dx = newPos.x - anchor.x;
+                    const dy = newPos.y - anchor.y;
+                    
+                    // Calculate current distance
+                    const currentLength = Math.hypot(dx, dy);
+                    
+                    // Project the point onto the circle with the fixed length
+                    if (currentLength > 0) {  // Avoid division by zero
+                    validPosition = {
+                            x: anchor.x + (dx * length / currentLength),
+                            y: anchor.y + (dy * length / currentLength)
+                    };
+                } else {
+                        // If somehow at same point, keep original position
+                        validPosition = this.points[this.selectedPointIndex];
+                }
+            } else {
+                    // Multiple fixed lengths - find intersection points
+                    const intersections = [];
+                    const firstSegment = fixedSegments[0];
+                    const secondSegment = fixedSegments[1];
+                    
+                    // Get centers (anchor points) and radii (fixed lengths)
+                    const c1 = this.points[firstSegment.otherIndex];
+                    const r1 = firstSegment.length;
+                    const c2 = this.points[secondSegment.otherIndex];
+                    const r2 = secondSegment.length;
+                    
+                    // Calculate distance between centers
+                    const dx = c2.x - c1.x;
+                    const dy = c2.y - c1.y;
+                    const d = Math.hypot(dx, dy);
+                    
+                    // Check if circles intersect
+                    if (d > r1 + r2 || d < Math.abs(r1 - r2) || (d === 0 && r1 === r2)) {
+                        // No valid intersection - keep original position
+                        this.points = originalPositions;
+                        return;
+                    }
+                    
+                    // Calculate intersection points
+                    const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+                    const h = Math.sqrt(r1 * r1 - a * a);
+                    
+                    const x2 = c1.x + (dx * a / d);
+                    const y2 = c1.y + (dy * a / d);
+                    
+                    const rx = -dy * (h / d);
+                    const ry = dx * (h / d);
+                    
+                    intersections.push({
+                        x: x2 + rx,
+                        y: y2 + ry
+                    });
+                    
+                    intersections.push({
+                        x: x2 - rx,
+                        y: y2 - ry
+                    });
+                    
+                    // Choose the intersection point closest to the desired position
+                    if (intersections.length > 0) {
+                        let minDist = Infinity;
+                        intersections.forEach(point => {
+                            const dist = Math.hypot(point.x - newPos.x, point.y - newPos.y);
+                            if (dist < minDist) {
+                                minDist = dist;
+                                validPosition = point;
+                            }
+                        });
+                    }
+                }
+                
+                if (!validPosition) {
+                    // No valid position found - revert to original
+                    this.points = originalPositions;
+                    return;
+                }
+                
+                // Apply the valid position
+                this.points[this.selectedPointIndex] = validPosition;
+                
+                // Check if this position works with angles
+                if (this.roomAngles[this.activeRoomIndex].size > 0) {
+                    const originalAngles = new Map(this.roomAngles[this.activeRoomIndex]);
+                    this.enforceAllAngles();
+                    
+                    // If enforcing angles broke any fixed lengths, revert everything
+                    if (!this.areFixedLengthsValid()) {
+                        this.points = originalPositions;
+                        this.roomAngles[this.activeRoomIndex] = originalAngles;
+                        return;
+                    }
+                }
+            } else {
+                // No fixed lengths - normal movement but check angles
+                this.points[this.selectedPointIndex] = newPos;
+                
+                if (this.roomAngles[this.activeRoomIndex].size > 0) {
+                    this.enforceAllAngles();
+                    
+                    // If angles caused any fixed lengths to break, revert
+                    if (!this.areFixedLengthsValid()) {
+                        this.points = originalPositions;
+                        return;
+                    }
+                }
+            }
+
             this.updateMeasurements();
             this.render();
             return;
@@ -225,29 +360,41 @@ class RoomEditor {
     }
 
     enforceAllAngles() {
+        const tolerance = 0.0001; // Very tight tolerance
+        const maxIterations = 100;
         let iterations = 0;
-        const maxIterations = 10;
-        let angleFixed;
+        let maxAngleError = 0;
 
         do {
-            angleFixed = false;
-            // Only enforce angles for the active room
+            maxAngleError = 0;
             const activeAngles = this.roomAngles[this.activeRoomIndex];
+            const fixedLengths = this.roomFixedLengths[this.activeRoomIndex];
             
-            for (let pointIndex = 0; pointIndex < this.points.length; pointIndex++) {
-                const targetAngle = activeAngles.get(pointIndex);
-                if (targetAngle === undefined) continue;
-
+            // Process all fixed angles in each iteration
+            for (const [pointIndex, targetAngle] of activeAngles.entries()) {
                 const numPoints = this.points.length;
-                const prev = this.points[(pointIndex - 1 + numPoints) % numPoints];
+                const prevIndex = (pointIndex - 1 + numPoints) % numPoints;
+                const nextIndex = (pointIndex + 1) % numPoints;
+                
+                const prev = this.points[prevIndex];
                 const current = this.points[pointIndex];
-                const next = this.points[(pointIndex + 1) % numPoints];
+                const next = this.points[nextIndex];
 
                 const currentAngle = this.calculateCurrentAngle(pointIndex);
+                const angleError = Math.abs(currentAngle - targetAngle);
+                maxAngleError = Math.max(maxAngleError, angleError);
+                
+                if (angleError > tolerance) {
+                    // Check if either segment has a fixed length
+                    const prevSegmentKey = `${prevIndex}-${pointIndex}`;
+                    const nextSegmentKey = `${pointIndex}-${nextIndex}`;
+                    const reversePrevKey = `${pointIndex}-${prevIndex}`;
+                    const reverseNextKey = `${nextIndex}-${pointIndex}`;
+                    
+                    const prevIsFixed = fixedLengths.has(prevSegmentKey) || fixedLengths.has(reversePrevKey);
+                    const nextIsFixed = fixedLengths.has(nextSegmentKey) || fixedLengths.has(reverseNextKey);
 
-                if (Math.abs(currentAngle - targetAngle) > 0.1) {
-                    angleFixed = true;
-
+                    // Get the vectors
                     const v1 = {
                         x: prev.x - current.x,
                         y: prev.y - current.y
@@ -257,17 +404,39 @@ class RoomEditor {
                         y: next.y - current.y
                     };
 
-                    const angleToRotate = targetAngle - currentAngle;
-                    const rotatedVector = this.rotateVector(v2, angleToRotate);
+                    // Get the angle of v1 from positive x-axis
+                    const v1Angle = Math.atan2(v1.y, v1.x);
                     
-                    this.points[(pointIndex + 1) % numPoints] = {
-                        x: current.x + rotatedVector.x,
-                        y: current.y + rotatedVector.y
-                    };
+                    // Calculate the required angle for v2
+                    const v2RequiredAngle = v1Angle - (targetAngle * Math.PI / 180);
+                    
+                    if (prevIsFixed && nextIsFixed) {
+                        // Both segments are fixed - can't adjust either one
+                        continue;
+                    } else if (nextIsFixed) {
+                        // Next segment is fixed - try to rotate the previous point instead
+                        const v1Length = Math.hypot(v1.x, v1.y);
+                        const newV1Angle = v2RequiredAngle + Math.PI + (targetAngle * Math.PI / 180);
+                        this.points[prevIndex] = {
+                            x: current.x + v1Length * Math.cos(newV1Angle),
+                            y: current.y + v1Length * Math.sin(newV1Angle)
+                        };
+                    } else {
+                        // Next segment is free or only prev is fixed - rotate the next point
+                        const v2Length = Math.hypot(v2.x, v2.y);
+                        this.points[nextIndex] = {
+                            x: current.x + v2Length * Math.cos(v2RequiredAngle),
+                            y: current.y + v2Length * Math.sin(v2RequiredAngle)
+                        };
+                    }
                 }
             }
             iterations++;
-        } while (angleFixed && iterations < maxIterations);
+        } while (maxAngleError > tolerance && iterations < maxIterations);
+
+        if (iterations >= maxIterations) {
+            console.warn('Maximum iterations reached while enforcing angles');
+        }
     }
 
     rotatePointAroundCenter(center, point, angleDegrees) {
@@ -501,9 +670,10 @@ class RoomEditor {
     }
 
     calculateSegmentLength(point1, point2) {
+        // Use high-precision hypot for more accurate length calculation
         const dx = point2.x - point1.x;
         const dy = point2.y - point1.y;
-        return Math.sqrt(dx * dx + dy * dy);
+        return Math.hypot(dx, dy);
     }
 
     onCanvasClick(e) {
@@ -813,12 +983,16 @@ class RoomEditor {
             this.ctx.stroke();
             this.ctx.setLineDash([]);
 
-            // Draw angle text
+            // Draw angle text - just show the target angle since we're enforcing it exactly
+            // Calculate the actual measurement
+            const measurement = this.calculateCurrentAngle(index);
+            
+            // Draw angle text with both target and current measurement
             this.ctx.fillStyle = '#2563eb';
             this.ctx.font = '12px Arial';
             this.ctx.textAlign = 'center';
             this.ctx.textBaseline = 'middle';
-            this.ctx.fillText(`${angle}°`, x, y - 20);
+            this.ctx.fillText(`${angle}° (${measurement.toFixed(1)}°)`, x, y - 20);
         });
 
         // Draw room names for all rooms
@@ -1039,9 +1213,41 @@ class RoomEditor {
             menu.remove();
         });
 
+        // Add separator
+        const separator = document.createElement('div');
+        separator.style.cssText = `
+            height: 1px;
+            background-color: rgb(226 232 240);
+            margin: 4px 0;
+        `;
+
+        // Add delete room option
+        const deleteRoomItem = document.createElement('button');
+        deleteRoomItem.className = 'context-menu-item';
+        deleteRoomItem.style.cssText = setNameItem.style.cssText;
+        deleteRoomItem.innerHTML = `
+            <span style="flex-grow: 1; color: #dc2626">Delete Room</span>
+        `;
+        deleteRoomItem.addEventListener('mouseenter', () => {
+            deleteRoomItem.style.backgroundColor = 'rgb(254 242 242)';
+        });
+        deleteRoomItem.addEventListener('mouseleave', () => {
+            deleteRoomItem.style.backgroundColor = 'transparent';
+        });
+        deleteRoomItem.addEventListener('click', () => {
+            this.deleteRoom(this.activeRoomIndex);
+            menu.remove();
+        });
+
         menu.appendChild(setNameItem);
         if (currentRoomName) {
             menu.appendChild(clearNameItem);
+        }
+
+        // Only show delete option if we have more than one room
+        if (this.rooms.length > 1) {
+            menu.appendChild(separator);
+            menu.appendChild(deleteRoomItem);
         }
 
         menu.style.left = `${e.clientX}px`;
@@ -1227,7 +1433,7 @@ class RoomEditor {
     promptAngle(pointIndex) {
         const currentAngle = this.roomAngles[this.activeRoomIndex].get(pointIndex) || 
                            this.calculateCurrentAngle(pointIndex);
-        const angle = prompt('Enter angle in degrees:', currentAngle.toFixed(1));
+        const angle = prompt('Enter inside angle in degrees:', currentAngle.toFixed(1));
         
         if (angle !== null) {
             const angleNum = parseFloat(angle);
@@ -1272,15 +1478,20 @@ class RoomEditor {
             angle += 360;
         }
         
-        // Return the actual angle (removed the 180 - angle conversion)
+        // Convert to inside angle
+        angle = 360 - angle;
+        
         return angle;
     }
 
     rotateVector(v, angleDegrees) {
-        const angleRadians = angleDegrees * Math.PI / 180;
+        const angleRadians = (angleDegrees * Math.PI) / 180;
+        const cos = Math.cos(angleRadians);
+        const sin = Math.sin(angleRadians);
+        
         return {
-            x: v.x * Math.cos(angleRadians) - v.y * Math.sin(angleRadians),
-            y: v.x * Math.sin(angleRadians) + v.y * Math.cos(angleRadians)
+            x: v.x * cos - v.y * sin,
+            y: v.x * sin + v.y * cos
         };
     }
 
@@ -1402,58 +1613,44 @@ class RoomEditor {
     }
 
     enforceFixedLengths(movedPointIndex) {
+        const tolerance = 0.000001; // Ultra-tight tolerance (sub-millimeter)
         const fixedLengths = this.roomFixedLengths[this.activeRoomIndex];
-        let iterations = 0;
-        const maxIterations = 10;
-        let lengthFixed;
-
-        do {
-            lengthFixed = false;
-            
-            // Check all segments connected to the moved point
-            const numPoints = this.points.length;
-            const prevIndex = (movedPointIndex - 1 + numPoints) % numPoints;
-            const nextIndex = (movedPointIndex + 1) % numPoints;
-
-            // Check and adjust previous segment
-            const prevKey = `${prevIndex}-${movedPointIndex}`;
-            const prevKeyReverse = `${movedPointIndex}-${prevIndex}`;
-            const prevFixedLength = fixedLengths.get(prevKey) || fixedLengths.get(prevKeyReverse);
-            
-            if (prevFixedLength !== undefined) {
+        
+        // Store original positions
+        const originalPositions = this.points.map(p => ({ ...p }));
+        
+        // Check if the moved point is part of any fixed length segments
+        let hasFixedSegments = false;
+        for (const [key, targetLength] of fixedLengths.entries()) {
+            const [index1, index2] = key.split('-').map(Number);
+            if (movedPointIndex === index1 || movedPointIndex === index2) {
+                hasFixedSegments = true;
+                
+                // Calculate current length
                 const currentLength = this.calculateSegmentLength(
-                    this.points[prevIndex],
-                    this.points[movedPointIndex]
+                    this.points[index1],
+                    this.points[index2]
                 );
                 
-                if (Math.abs(currentLength - prevFixedLength) > 0.01) {
-                    lengthFixed = true;
-                    this.adjustSegmentLength(prevIndex, movedPointIndex, prevFixedLength);
+                // If length changed beyond tolerance, revert immediately
+                if (Math.abs(currentLength - targetLength) > tolerance) {
+                    this.points = originalPositions;
+                    return false;
                 }
             }
-
-            // Check and adjust next segment
-            const nextKey = `${movedPointIndex}-${nextIndex}`;
-            const nextKeyReverse = `${nextIndex}-${movedPointIndex}`;
-            const nextFixedLength = fixedLengths.get(nextKey) || fixedLengths.get(nextKeyReverse);
-            
-            if (nextFixedLength !== undefined) {
-                const currentLength = this.calculateSegmentLength(
-                    this.points[movedPointIndex],
-                    this.points[nextIndex]
-                );
-                
-                if (Math.abs(currentLength - nextFixedLength) > 0.01) {
-                    lengthFixed = true;
-                    this.adjustSegmentLength(movedPointIndex, nextIndex, nextFixedLength);
-                }
-            }
-
-            iterations++;
-        } while (lengthFixed && iterations < maxIterations);
+        }
+        
+        // If this point has fixed segments and we got here, the move preserved all lengths
+        if (hasFixedSegments) {
+            return true;
+        }
+        
+        // If point has no fixed segments, allow the move
+        return true;
     }
 
     areFixedLengthsValid() {
+        const tolerance = 0.000001; // Ultra-tight tolerance
         const fixedLengths = this.roomFixedLengths[this.activeRoomIndex];
         
         for (const [key, targetLength] of fixedLengths.entries()) {
@@ -1463,12 +1660,109 @@ class RoomEditor {
                 this.points[index2]
             );
             
-            if (Math.abs(currentLength - targetLength) > 0.01) {
+            if (Math.abs(currentLength - targetLength) > tolerance) {
                 return false;
             }
         }
         
         return true;
+    }
+
+    // Add new helper method to check angle errors
+    getMaxAngleError() {
+        let maxError = 0;
+        const activeAngles = this.roomAngles[this.activeRoomIndex];
+        
+        for (const [pointIndex, targetAngle] of activeAngles.entries()) {
+            const currentAngle = this.calculateCurrentAngle(pointIndex);
+            const error = Math.abs(currentAngle - targetAngle);
+            maxError = Math.max(maxError, error);
+        }
+        
+        return maxError;
+    }
+
+    // Add new method to save floorplan
+    async saveFloorplan() {
+        // Use the globally injected IDs
+        const companyId = window.companyId;
+        const customerId = window.customerId;
+
+        // Validate IDs are present
+        if (!companyId || !customerId) {
+            alert('Company ID or Customer ID is missing');
+            return;
+        }
+
+        // Validate all rooms have names
+        const unnamedRooms = this.rooms.filter((_, index) => !this.roomNames[index]);
+        if (unnamedRooms.length > 0) {
+            alert(`Please name all rooms before saving. ${unnamedRooms.length} room(s) unnamed.`);
+            return;
+        }
+
+        // Prepare rooms data
+        const roomsData = this.rooms.map((points, index) => ({
+            name: this.roomNames[index],
+            points: points.map(p => ({
+                x: p.x + this.roomOffsets[index].x,
+                y: p.y + this.roomOffsets[index].y
+            }))
+        }));
+
+        try {
+            const response = await fetch('/api/rooms/floorplan', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    rooms: roomsData,
+                    companyId,
+                    customerId
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                console.error('Server response:', error);
+                throw new Error(error.error || 'Failed to save floorplan');
+            }
+
+            const result = await response.json();
+            console.log('Save operations:', result.operations);
+            alert(`Floorplan saved successfully!\nCreated: ${result.operations.created}\nUpdated: ${result.operations.updated}\nDeleted: ${result.operations.deleted}`);
+        } catch (error) {
+            console.error('Error saving floorplan:', error);
+            alert('Failed to save floorplan: ' + error.message);
+        }
+    }
+
+    deleteRoom(roomIndex) {
+        if (this.rooms.length <= 1) {
+            alert('Cannot delete the last room');
+            return;
+        }
+
+        // Remove the room and its associated data
+        this.rooms.splice(roomIndex, 1);
+        this.roomNames.splice(roomIndex, 1);
+        this.roomOffsets.splice(roomIndex, 1);
+        this.roomAngles.splice(roomIndex, 1);
+        this.roomFixedLengths.splice(roomIndex, 1);
+
+        // If we deleted the active room, switch to the previous room
+        if (roomIndex === this.activeRoomIndex) {
+            this.activeRoomIndex = Math.max(0, roomIndex - 1);
+            this.points = this.rooms[this.activeRoomIndex];
+        } else if (roomIndex < this.activeRoomIndex) {
+            // If we deleted a room before the active room, adjust the active room index
+            this.activeRoomIndex--;
+        }
+
+        // Update measurements and render
+        this.updateMeasurements();
+        this.render();
     }
 }
 

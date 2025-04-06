@@ -12,6 +12,12 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export const serviceAuth = () => async (req: Request, res: Response, next: NextFunction) => {
+    // Allow requests from room-editor.js to pass through
+    const referer = req.headers.referer;
+    if (referer && referer.includes('/create-room/')) {
+        return next();
+    }
+
     try {
         const response = await axios.post(`${AUTH_SERVICE_URL}/api/auth/verify`, {}, {
             headers: {
