@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{company.name}} Floorplan - {{customer.first_name}} {{customer.last_name}}</title>
+    <style>
+        @page {
+            size: A4 landscape;
+            margin: 0;
+        }
+
+        body {
+            margin: 0;
+            padding: 40px;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #64748b20;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 40px;
+        }
+
+        .page {
+            width: 297mm;
+            height: 210mm;
+            position: relative;
+            background: white;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            margin: 0 auto;
+            page-break-after: always;
+        }
+
+        @media print {
+            body {
+                margin: 0;
+                padding: 0;
+                background: white;
+            }
+
+            .page {
+                box-shadow: none;
+                margin: 0;
+            }
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 25px 30px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .company-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .company-info img {
+            height: 45px;
+            width: auto;
+        }
+
+        .customer-info {
+            text-align: right;
+            font-size: 11px;
+            line-height: 1.5;
+            color: #333333;
+        }
+
+        .floorplan-container {
+            position: relative;
+            height: calc(210mm - 190px);
+            margin: 0px 30px;
+            padding: 20px 0;
+            overflow: visible;
+        }
+
+        .rooms-wrapper {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 100%;
+            height: 90%;
+            border: 1px solid #e0e0e0;
+        }
+
+        .room {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            padding: 40px;
+            box-sizing: border-box;
+            {{#if is_single_room}}
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            {{/if}}
+        }
+
+        .room svg {
+            width: 100%;
+            height: 100%;
+            overflow: visible;
+            display: block;
+        }
+
+        .room path {
+            fill: #64748b20;
+            stroke: #64748b;
+            stroke-width: 1;
+            vector-effect: non-scaling-stroke;
+        }
+
+        .room-label {
+            font-size: 12px;
+            font-weight: bold;
+            fill: #64748b;
+            text-anchor: middle;
+            dominant-baseline: middle;
+        }
+
+        .room-measurement {
+            font-size: 10px;
+            fill: #64748b;
+            text-anchor: middle;
+            dominant-baseline: middle;
+        }
+
+        .room-measurements {
+            font-size: 11px;
+            margin-top: 3px;
+        }
+
+        .footer {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            color: #666666;
+            font-size: 10px;
+            padding: 15px 30px;
+            border-top: 1px solid #e0e0e0;
+        }
+        
+        .scale-indicator {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-size: 9px;
+            color: #64748b;
+        }
+        
+        .scale-bar {
+            width: 50px;
+            height: 2px;
+            background: #64748b;
+            margin-bottom: 3px;
+        }
+        
+        .floorplan-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #64748b;
+            text-align: center;
+            flex-grow: 1;
+            margin: 0 20px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Main floorplan page -->
+    <div class="page">
+        <div class="header">
+            <div class="company-info">
+                <img src="https://media.papstore.co.uk/api/media/company-logo/file/983aea35-c7f2-4416-83bf-e719544e2581" alt="Company Logo" />
+            </div>
+            <div class="floorplan-title">PROPERTY FLOORPLAN</div>
+            <div class="customer-info">
+                <div>{{customer.address_line1}}</div>
+                {{#if customer.address_line2}}
+                <div>{{customer.address_line2}}</div>
+                {{/if}}
+                <div>{{customer.city}}</div>
+                <div>{{customer.county}} {{customer.postcode}}</div>
+            </div>
+        </div>
+
+        <div class="floorplan-container">
+            <div class="rooms-wrapper">
+                {{#each rooms}}
+                <div class="room">
+                    <svg viewBox="{{this.viewBox}}" preserveAspectRatio="xMidYMid meet">
+                        <path d="{{this.path}}" />
+                        <text class="room-label" x="{{this.center.x}}" y="{{this.center.y}}">
+                            {{this.name}}
+                        </text>
+                        {{#each this.measurements}}
+                        <text class="room-measurement" x="{{this.position.x}}" y="{{this.position.y}}" transform="rotate({{this.angle}} {{this.position.x}} {{this.position.y}})">
+                            {{this.value}}m
+                        </text>
+                        {{/each}}
+                    </svg>
+                </div>
+                {{/each}}
+            </div>
+            
+            <div class="scale-indicator">
+                <div class="scale-bar"></div>
+                <div>5m</div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div>© {{current_year}} {{company.name}}</div>
+            <div>{{company.website}}</div>
+        </div>
+    </div>
+
+    <!-- Individual room pages -->
+    {{#each rooms}}
+    <div class="page">
+        <div class="header">
+            <div class="company-info">
+                <img src="https://media.papstore.co.uk/api/media/company-logo/file/983aea35-c7f2-4416-83bf-e719544e2581" alt="Company Logo" />
+            </div>
+            <div class="floorplan-title">{{this.name}} - ROOM DETAIL</div>
+            <div class="customer-info">
+                <div>{{../customer.address_line1}}</div>
+                {{#if ../customer.address_line2}}
+                <div>{{../customer.address_line2}}</div>
+                {{/if}}
+                <div>{{../customer.city}}</div>
+                <div>{{../customer.county}} {{../customer.postcode}}</div>
+            </div>
+        </div>
+
+        <div class="floorplan-container">
+            <div class="rooms-wrapper">
+                <div class="room">
+                    <svg viewBox="{{this.viewBox}}" preserveAspectRatio="xMidYMid meet">
+                        <path d="{{this.path}}" />
+                        <text class="room-label" x="{{this.center.x}}" y="{{this.center.y}}">
+                            {{this.name}}
+                        </text>
+                        {{#each this.measurements}}
+                        <text class="room-measurement" x="{{this.position.x}}" y="{{this.position.y}}" transform="rotate({{this.angle}} {{this.position.x}} {{this.position.y}})">
+                            {{this.value}}m
+                        </text>
+                        {{/each}}
+                    </svg>
+                </div>
+            </div>
+            
+            <div class="scale-indicator">
+                <div class="scale-bar"></div>
+                <div>5m</div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div>© {{../current_year}} {{../company.name}}</div>
+            <div>{{../company.website}}</div>
+        </div>
+    </div>
+    {{/each}}
+
+    <script>
+        function positionElements() {
+            const TEXT_OFFSET = -15;
+            const ROOM_PADDING = 40; // Match the CSS padding
+            
+            document.querySelectorAll('.rooms-wrapper').forEach(wrapper => {
+                const rooms = wrapper.querySelectorAll('.room');
+                const isSingleRoom = rooms.length === 1;
+                
+                // Find the overall bounds of all rooms in this wrapper
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                
+                rooms.forEach(room => {
+                    const svg = room.querySelector('svg');
+                    const path = svg.querySelector('path');
+                    const d = path.getAttribute('d');
+                    const points = d.match(/[ML] ([-\d.]+) ([-\d.]+)/g).map(point => {
+                        const [x, y] = point.slice(2).split(' ').map(Number);
+                        return { x, y };
+                    });
+                    
+                    points.forEach(point => {
+                        minX = Math.min(minX, point.x);
+                        minY = Math.min(minY, point.y);
+                        maxX = Math.max(maxX, point.x);
+                        maxY = Math.max(maxY, point.y);
+                    });
+                });
+                
+                // Calculate the overall dimensions and center
+                const totalWidth = maxX - minX;
+                const totalHeight = maxY - minY;
+                const centerX = minX + totalWidth / 2;
+                const centerY = minY + totalHeight / 2;
+                
+                // Calculate the scale factor to account for padding
+                const availableWidth = wrapper.clientWidth - ROOM_PADDING * 2;
+                const availableHeight = wrapper.clientHeight - ROOM_PADDING * 2;
+                const scaleX = availableWidth / totalWidth;
+                const scaleY = availableHeight / totalHeight;
+                const scale = Math.min(scaleX, scaleY) * 0.9; // Add a bit more padding for safety
+                
+                rooms.forEach(room => {
+                    const svg = room.querySelector('svg');
+                    const path = svg.querySelector('path');
+                    
+                    if (isSingleRoom) {
+                        // Center the room
+                        room.style.left = '50%';
+                        room.style.top = '50%';
+                        room.style.transform = 'translate(-50%, -50%)';
+                        
+                        // Update path to be centered at origin
+                        const d = path.getAttribute('d');
+                        const centeredD = d.replace(/[ML] ([-\d.]+) ([-\d.]+)/g, (match, x, y) => {
+                            const newX = (parseFloat(x) - centerX) * scale;
+                            const newY = (parseFloat(y) - centerY) * scale;
+                            return match[0] + ' ' + newX + ' ' + newY;
+                        });
+                        path.setAttribute('d', centeredD);
+                        
+                        // Set viewBox to include padding
+                        const scaledWidth = totalWidth * scale;
+                        const scaledHeight = totalHeight * scale;
+                        svg.setAttribute('viewBox', `${-scaledWidth/2} ${-scaledHeight/2} ${scaledWidth} ${scaledHeight}`);
+                        
+                        // Update label and measurements
+                        const label = room.querySelector('.room-label');
+                        const measurements = room.querySelectorAll('.room-measurement');
+                        
+                        if (label) {
+                            // For single rooms, position at center
+                            const x = (parseFloat(label.getAttribute('x')) - centerX) * scale;
+                            const y = (parseFloat(label.getAttribute('y')) - centerY) * scale;
+                            label.setAttribute('x', x);
+                            label.setAttribute('y', y);
+                        }
+                        
+                        measurements.forEach(measurement => {
+                            const originalX = parseFloat(measurement.getAttribute('x'));
+                            const originalY = parseFloat(measurement.getAttribute('y'));
+                            const angle = parseFloat(measurement.getAttribute('transform').match(/rotate\(([-\d.]+)/)?.[1] || '0');
+                            
+                            // Scale coordinates relative to center
+                            const x = (originalX - centerX) * scale;
+                            const y = (originalY - centerY) * scale;
+                            
+                            // Calculate offset position based on angle
+                            const angleRad = (angle * Math.PI) / 180;
+                            const perpAngleRad = angleRad + Math.PI / 2;
+                            const offsetX = x + Math.cos(perpAngleRad) * TEXT_OFFSET;
+                            const offsetY = y + Math.sin(perpAngleRad) * TEXT_OFFSET;
+                            
+                            measurement.setAttribute('x', offsetX);
+                            measurement.setAttribute('y', offsetY);
+                            measurement.setAttribute('transform', `rotate(${angle} ${offsetX} ${offsetY})`);
+                        });
+                    } else {
+                        // For multiple rooms, transform the path coordinates
+                        const d = path.getAttribute('d');
+                        const transformedD = d.replace(/[ML] ([-\d.]+) ([-\d.]+)/g, (match, x, y) => {
+                            const newX = (parseFloat(x) - centerX) * scale;
+                            const newY = (parseFloat(y) - centerY) * scale;
+                            return match[0] + ' ' + newX + ' ' + newY;
+                        });
+                        path.setAttribute('d', transformedD);
+                        
+                        // Set viewBox to fit all rooms
+                        const viewBoxWidth = totalWidth * scale;
+                        const viewBoxHeight = totalHeight * scale;
+                        svg.setAttribute('viewBox', `${-viewBoxWidth/2} ${-viewBoxHeight/2} ${viewBoxWidth} ${viewBoxHeight}`);
+                        
+                        // Center the room in the wrapper
+                        room.style.left = '50%';
+                        room.style.top = '50%';
+                        room.style.transform = 'translate(-50%, -50%)';
+                        
+                        // Update labels and measurements
+                        const label = room.querySelector('.room-label');
+                        const measurements = room.querySelectorAll('.room-measurement');
+                        
+                        if (label) {
+                            const x = (parseFloat(label.getAttribute('x')) - centerX) * scale;
+                            const y = (parseFloat(label.getAttribute('y')) - centerY) * scale;
+                            label.setAttribute('x', x);
+                            label.setAttribute('y', y);
+                        }
+                        
+                        measurements.forEach(measurement => {
+                            const x = (parseFloat(measurement.getAttribute('x')) - centerX) * scale;
+                            const y = (parseFloat(measurement.getAttribute('y')) - centerY) * scale;
+                            const angle = parseFloat(measurement.getAttribute('transform').match(/rotate\(([-\d.]+)/)?.[1] || '0');
+                            
+                            // Calculate offset position based on angle
+                            const angleRad = (angle * Math.PI) / 180;
+                            const perpAngleRad = angleRad + Math.PI / 2;
+                            const offsetX = x + Math.cos(perpAngleRad) * TEXT_OFFSET;
+                            const offsetY = y + Math.sin(perpAngleRad) * TEXT_OFFSET;
+                            
+                            measurement.setAttribute('x', offsetX);
+                            measurement.setAttribute('y', offsetY);
+                            measurement.setAttribute('transform', `rotate(${angle} ${offsetX} ${offsetY})`);
+                        });
+                    }
+                });
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', positionElements);
+    </script>
+</body>
+</html>

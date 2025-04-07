@@ -23,7 +23,13 @@ class RoomEditor {
 
         // Initialize with existing rooms if available
         if (window.existingRooms && Array.isArray(window.existingRooms)) {
-            this.rooms = window.existingRooms.map(room => room.points);
+            this.rooms = window.existingRooms.map(room => {
+                // Extract the base coordinates without offsets
+                return room.points.map(p => ({
+                    x: p.x,
+                    y: p.y
+                }));
+            });
             this.roomNames = window.existingRooms.map(room => room.name);
             this.roomOffsets = window.existingRooms.map(() => ({ x: 0, y: 0 }));
             this.roomAngles = window.existingRooms.map(() => new Map());

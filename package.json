@@ -11,10 +11,12 @@
     "build-client": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@types/handlebars": "^4.0.40",
     "axios": "^1.8.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
     "express": "^4.21.2",
+    "handlebars": "^4.7.8",
     "pg": "^8.11.3"
   },
   "devDependencies": {
