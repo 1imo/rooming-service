@@ -6,6 +6,8 @@ import { RoomRepository } from './repositories/RoomRepository';
 import { pool } from './config/database';
 import fs from 'fs/promises';
 import Handlebars from 'handlebars';
+import { CompanyRepository } from './repositories/CompanyRepository';
+import { CustomerRepository } from './repositories/CustomerRepository';
 
 interface Point {
     x: number;
@@ -41,6 +43,8 @@ interface Customer {
 
 const app = express();
 const roomRepository = new RoomRepository(pool);
+const companyRepository = new CompanyRepository();
+const customerRepository = new CustomerRepository();
 
 app.use(cors());
 app.use(express.json());
@@ -103,15 +107,34 @@ app.get('/floorplan/:companyId/:customerId/:roomName?', async (req, res) => {
             };
         });
 
-        // Get company details (you'll need to implement this)
-        const company = await getCompanyDetails(companyId);
-        // Get customer details (you'll need to implement this)
-        const customer = await getCustomerDetails(customerId);
+        // Get company details
+        const company = await companyRepository.findById(companyId);
+        if (!company) {
+            throw new Error('Company not found');
+        }
+
+        // Get customer details
+        const customer = await customerRepository.findById(customerId, companyId);
+        if (!customer) {
+            throw new Error('Customer not found');
+        }
 
         // Prepare the data for the template
         const data = {
-            company,
-            customer,
+            company: {
+                name: company.name,
+                logo: `${process.env.MEDIA_SERVICE_URL}/api/media/company-logo/file/${companyId}`,
+                website: company.website
+            },
+            customer: {
+                first_name: customer.first_name,
+                last_name: customer.last_name,
+                address_line1: customer.address_line1,
+                address_line2: customer.address_line2,
+                city: customer.city,
+                county: customer.county,
+                postcode: customer.postcode
+            },
             rooms: roomsData,
             generated_date: new Date().toLocaleDateString(),
             current_year: new Date().getFullYear()
@@ -221,30 +244,6 @@ function calculateMeasurements(points: Point[]): Measurement[] {
     }
     
     return measurements;
-}
-
-// Helper function to get company details (implement this)
-async function getCompanyDetails(companyId: string): Promise<Company> {
-    // TODO: Implement company details fetching
-    return {
-        name: "Company Name",
-        logo: "/path/to/logo.png",
-        website: "www.company.com"
-    };
-}
-
-// Helper function to get customer details (implement this)
-async function getCustomerDetails(customerId: string): Promise<Customer> {
-    // TODO: Implement customer details fetching
-    return {
-        first_name: "John",
-        last_name: "Doe",
-        address_line1: "123 Main St",
-        address_line2: "Apt 4B",
-        city: "London",
-        county: "Greater London",
-        postcode: "SW1A 1AA"
-    };
 }
 
 // Serve the room creation page with company and customer IDs
