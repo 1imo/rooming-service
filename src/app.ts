@@ -8,6 +8,7 @@ import fs from 'fs/promises';
 import Handlebars from 'handlebars';
 import { CompanyRepository } from './repositories/CompanyRepository';
 import { CustomerRepository } from './repositories/CustomerRepository';
+import { PDFGenerator } from './utils/PDFGenerator';
 
 interface Point {
     x: number;
@@ -45,6 +46,7 @@ const app = express();
 const roomRepository = new RoomRepository(pool);
 const companyRepository = new CompanyRepository();
 const customerRepository = new CustomerRepository();
+const pdfGenerator = new PDFGenerator();
 
 app.use(cors());
 app.use(express.json());
@@ -64,7 +66,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.use('/api/rooms', roomRoutes);
 
 // Serve the floorplan template
-app.get('/floorplan/:companyId/:customerId/:roomName?', async (req, res) => {
+app.get('/floorplan/:companyId/:customerId/:roomName(*)?', async (req, res) => {
     try {
         const { companyId, customerId, roomName } = req.params;
         
@@ -74,9 +76,12 @@ app.get('/floorplan/:companyId/:customerId/:roomName?', async (req, res) => {
         
         // Compile the template
         const compiledTemplate = Handlebars.compile(template);
+
+        console.log(req.params)
         
         // Fetch rooms for this customer
         const rooms = await roomRepository.getRoomsByCustomer(customerId);
+        console.log(rooms);
         
         // Filter rooms if roomName is provided
         const filteredRooms = roomName 
@@ -166,35 +171,6 @@ function pointsToSvgPath(points: Point[]): string {
     commands.push('Z');
     
     return commands.join(' ');
-}
-
-// Helper function to calculate polygon area using the Shoelace formula
-function calculateArea(points: Point[]): number {
-    if (!points || points.length < 3) return 0;
-    
-    let area = 0;
-    for (let i = 0; i < points.length; i++) {
-        const j = (i + 1) % points.length;
-        area += points[i].x * points[j].y;
-        area -= points[j].x * points[i].y;
-    }
-    
-    return Math.abs(area) / 2;
-}
-
-// Helper function to calculate perimeter
-function calculatePerimeter(points: Point[]): number {
-    if (!points || points.length < 2) return 0;
-    
-    let perimeter = 0;
-    for (let i = 0; i < points.length; i++) {
-        const j = (i + 1) % points.length;
-        const dx = points[j].x - points[i].x;
-        const dy = points[j].y - points[i].y;
-        perimeter += Math.sqrt(dx * dx + dy * dy);
-    }
-    
-    return perimeter;
 }
 
 // Helper function to calculate room center
@@ -333,6 +309,26 @@ app.get('/rooms/:companyId/:customerId/:roomName', async (req, res) => {
     } catch (error) {
         console.error('Error preparing room view page:', error);
         res.status(500).send('Error loading page');
+    }
+});
+
+// PDF generation route
+app.get('/floor/pdf/:companyId/:customerId/:roomName?', async (req, res) => {
+    try {
+        const { companyId, customerId, roomName } = req.params;
+
+        // Generate PDF
+        const pdfBuffer = await pdfGenerator.generate(companyId, customerId, roomName);
+
+        // Set response headers
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="floorplan${roomName ? `-${roomName}` : ''}.pdf"`);
+
+        // Send the PDF
+        res.send(pdfBuffer);
+    } catch (error) {
+        console.error('Error generating PDF:', error);
+        res.status(500).send('Error generating PDF');
     }
 });
 

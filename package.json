@@ -8,7 +8,8 @@
     "dev": "nodemon --exec ts-node src/app.ts",
     "build": "tsc",
     "test": "jest",
-    "build-client": "tsc -p tsconfig.json"
+    "build-client": "tsc -p tsconfig.json",
+    "postinstall": "node node_modules/puppeteer/install.js"
   },
   "dependencies": {
     "@types/handlebars": "^4.0.40",
@@ -17,7 +18,8 @@
     "dotenv": "^16.4.1",
     "express": "^4.21.2",
     "handlebars": "^4.7.8",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "puppeteer": "^21.5.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
