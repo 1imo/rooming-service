@@ -53,12 +53,14 @@
             align-items: center;
             padding: 25px 30px;
             border-bottom: 1px solid #e0e0e0;
+            position: relative;
         }
 
         .company-info {
             display: flex;
             align-items: center;
             gap: 15px;
+            flex: 0 0 auto;
         }
 
         .company-info img {
@@ -71,6 +73,7 @@
             font-size: 11px;
             line-height: 1.5;
             color: #333333;
+            flex: 0 0 auto;
         }
 
         .floorplan-container {
@@ -170,12 +173,17 @@
         }
         
         .floorplan-title {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
             font-size: 14px;
             font-weight: bold;
             color: #64748b;
             text-align: center;
-            flex-grow: 1;
-            margin: 0 20px;
+            white-space: nowrap;
+            margin: 0;
+            padding: 0;
         }
     </style>
 </head>

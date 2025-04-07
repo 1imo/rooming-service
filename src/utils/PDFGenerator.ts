@@ -1,4 +1,3 @@
-// Final version of PDFGenerator with layout stability + multi-room scaling logic
 import puppeteer from 'puppeteer';
 import os from 'os';
 
@@ -53,35 +52,44 @@ export class PDFGenerator {
                 await page.emulateMediaType('screen');
                 await page.evaluateHandle('document.fonts.ready');
 
-                // Apply stable layout styles
+                // Apply layout and page formatting
                 await page.evaluate(() => {
+                    document.documentElement.style.background = 'white';
+
                     document.body.style.margin = '0';
                     document.body.style.padding = '0';
                     document.body.style.background = 'white';
                     document.body.style.minHeight = '210mm';
                     document.body.style.display = 'block';
+                    document.body.style.boxShadow = 'none';
 
-                    document.querySelectorAll('.page').forEach(page => {
+                    const pages = document.querySelectorAll('.page');
+                    pages.forEach((page, i) => {
                         const el = page as HTMLElement;
-                        el.style.width = '1123px';
-                        el.style.height = '794px';
-                        el.style.pageBreakAfter = 'always';
+                        el.style.width = '297mm';
+                        el.style.height = '210mm';
+                        el.style.pageBreakAfter = (i === pages.length - 1) ? 'auto' : 'always';
+                        el.style.margin = '0';
+                        el.style.padding = '0';
                         el.style.overflow = 'hidden';
-                        el.style.margin = '0 auto';
                         el.style.position = 'relative';
+                        el.style.background = 'white';
+                        el.style.boxShadow = 'none';
+                        el.style.border = 'none';
                     });
 
                     document.querySelectorAll('.floorplan-container').forEach(container => {
                         const el = container as HTMLElement;
                         el.style.display = 'flex';
                         el.style.justifyContent = 'center';
-                        el.style.alignItems = 'center';
+                        el.style.alignItems = 'flex-start';
                         el.style.width = '1063px';
-                        el.style.height = '560px';
+                        el.style.height = 'calc(100% - 200px)';
                         el.style.margin = '0 30px';
                         el.style.padding = '20px 0';
                         el.style.position = 'relative';
                         el.style.overflow = 'visible';
+                        el.style.background = 'white';
                     });
 
                     document.querySelectorAll('.rooms-wrapper').forEach(wrapper => {
@@ -96,54 +104,64 @@ export class PDFGenerator {
                     document.querySelectorAll('.room').forEach(room => {
                         const el = room as HTMLElement;
                         el.style.position = 'absolute';
+                        el.style.top = '0';
                         el.style.left = '50%';
-                        el.style.top = '50%';
-                        el.style.transform = 'translate(-50%, -50%)';
+                        el.style.transform = 'translateX(-50%)';
                         el.style.width = '100%';
                         el.style.height = '100%';
                     });
                 });
 
-                // Position & scale SVGs
-                await page.evaluate(() => {
-                    const TEXT_OFFSET = -15;
-                    const ROOM_PADDING = 40;
+                // Prepass to compute global min/max bounds across all rooms
+                const globalBounds = await page.evaluate(() => {
+                    const allBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
 
-                    document.querySelectorAll('.rooms-wrapper').forEach(wrapper => {
-                        const rooms = wrapper.querySelectorAll('.room');
-                        if (!rooms.length) return;
+                    document.querySelectorAll('.rooms-wrapper .room').forEach(room => {
+                        const svg = room.querySelector('svg');
+                        const path = svg?.querySelector('path');
+                        const d = path?.getAttribute('d') ?? '';
 
-                        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                        const points = d.match(/[ML] ([-\d.]+) ([-\d.]+)/g)?.map(p => {
+                            const [x, y] = p.slice(2).split(' ').map(Number);
+                            return { x, y };
+                        }) ?? [];
 
-                        rooms.forEach(room => {
-                            const svg = room.querySelector('svg');
-                            const path = svg?.querySelector('path');
-                            const d = path?.getAttribute('d') ?? '';
-
-                            const points = d.match(/[ML] ([-\d.]+) ([-\d.]+)/g)?.map(p => {
-                                const [x, y] = p.slice(2).split(' ').map(Number);
-                                return { x, y };
-                            }) ?? [];
-
-                            points.forEach(({ x, y }) => {
-                                minX = Math.min(minX, x);
-                                minY = Math.min(minY, y);
-                                maxX = Math.max(maxX, x);
-                                maxY = Math.max(maxY, y);
-                            });
+                        points.forEach(({ x, y }) => {
+                            allBounds.minX = Math.min(allBounds.minX, x);
+                            allBounds.minY = Math.min(allBounds.minY, y);
+                            allBounds.maxX = Math.max(allBounds.maxX, x);
+                            allBounds.maxY = Math.max(allBounds.maxY, y);
                         });
 
-                        const totalWidth = maxX - minX;
-                        const totalHeight = maxY - minY;
-                        const centerX = minX + totalWidth / 2;
-                        const centerY = minY + totalHeight / 2;
+                        const labels = room.querySelectorAll('.room-label, .room-measurement');
+                        labels.forEach(el => {
+                            const x = parseFloat(el.getAttribute('x') || '0');
+                            const y = parseFloat(el.getAttribute('y') || '0');
+                            allBounds.minX = Math.min(allBounds.minX, x);
+                            allBounds.minY = Math.min(allBounds.minY, y);
+                            allBounds.maxX = Math.max(allBounds.maxX, x);
+                            allBounds.maxY = Math.max(allBounds.maxY, y);
+                        });
+                    });
 
+                    return allBounds;
+                });
+
+                // Apply uniform scaling using the shared bounds
+                await page.evaluate(({ minX, minY, maxX, maxY }) => {
+                    const TEXT_OFFSET = -15;
+                    const totalWidth = maxX - minX;
+                    const totalHeight = maxY - minY;
+                    const centerX = minX + totalWidth / 2;
+                    const centerY = minY + totalHeight / 2;
+
+                    document.querySelectorAll('.rooms-wrapper').forEach(wrapper => {
                         const wrapperRect = (wrapper as HTMLElement).getBoundingClientRect();
-                        const availableWidth = wrapperRect.width - ROOM_PADDING * 2;
-                        const availableHeight = wrapperRect.height - ROOM_PADDING * 2;
-                        const scale = Math.min(availableWidth / totalWidth, availableHeight / totalHeight) * 0.85;
+                        const availableWidth = wrapperRect.width;
+                        const availableHeight = wrapperRect.height;
+                        const scale = Math.min(availableWidth / totalWidth, availableHeight / totalHeight) * 0.95;
 
-                        rooms.forEach(room => {
+                        wrapper.querySelectorAll('.room').forEach(room => {
                             const svg = room.querySelector('svg');
                             const path = svg?.querySelector('path');
                             if (!path) return;
@@ -160,7 +178,7 @@ export class PDFGenerator {
 
                             const viewBoxWidth = totalWidth * scale;
                             const viewBoxHeight = totalHeight * scale;
-                            svg?.setAttribute('viewBox', `${-viewBoxWidth/2} ${-viewBoxHeight/2} ${viewBoxWidth} ${viewBoxHeight}`);
+                            svg?.setAttribute('viewBox', `${-viewBoxWidth / 2} ${-viewBoxHeight / 2} ${viewBoxWidth} ${viewBoxHeight}`);
 
                             const label = room.querySelector('.room-label');
                             if (label) {
@@ -186,7 +204,7 @@ export class PDFGenerator {
                             });
                         });
                     });
-                });
+                }, globalBounds);
 
                 await page.waitForTimeout(1000);
 
@@ -201,8 +219,8 @@ export class PDFGenerator {
 
                 return Buffer.from(pdfBuffer);
             } catch (error: unknown) {
-                const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-                if (attempt === this.maxRetries - 1) throw new Error(`Failed to generate PDF: ${errorMessage}`);
+                const err = error instanceof Error ? error : new Error(String(error));
+                if (attempt === this.maxRetries - 1) throw new Error(`Failed to generate PDF: ${err.message}`);
                 await new Promise(res => setTimeout(res, this.retryDelay));
             } finally {
                 if (browser) await browser.close();
